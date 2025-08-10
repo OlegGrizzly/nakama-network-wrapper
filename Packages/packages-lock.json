@@ -1,12 +1,19 @@
 {
   "dependencies": {
     "com.heroiclabs.nakama-unity": {
-      "version": "file:Nakama",
+      "version": "https://github.com/heroiclabs/nakama-unity.git?path=/Packages/Nakama#v3.17.0",
       "depth": 0,
-      "source": "embedded",
+      "source": "git",
       "dependencies": {
         "com.unity.modules.unitywebrequest": "1.0.0"
-      }
+      },
+      "hash": "636afc8528e605249dec147363a9db89b68ce3d7"
+    },
+    "com.oleggrizzly.network": {
+      "version": "file:NakamaNetworkWrapper",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {}
     },
     "com.unity.ai.navigation": {
       "version": "1.1.7",
