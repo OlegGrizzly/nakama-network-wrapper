@@ -1,0 +1,10 @@
+{
+  "name": "NakamaNetworkWrapper.Editor",
+  "rootNamespace": "OlegGrizzly.NakamaNetworkWrapper.Editor",
+  "references": [
+    "NakamaNetworkWrapper.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ]
+}

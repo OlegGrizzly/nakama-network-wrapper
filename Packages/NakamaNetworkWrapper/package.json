@@ -1,0 +1,27 @@
+{
+  "name": "com.oleggrizzly.network",
+  "displayName": "Nakama Network Wrapper",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Unity wrapper for Heroic Labs Nakama.",
+  "author": {
+    "name": "Oleg Grizzly",
+    "email": "xew@list.ru",
+    "url": "https://github.com/OlegGrizzly"
+  },
+  "keywords": [
+    "nakama",
+    "networking",
+    "multiplayer",
+    "runtime",
+    "tools"
+  ],
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "Quick Start",
+      "description": "Usage examples for the package.",
+      "path": "Samples~/Example"
+    }
+  ]
+}

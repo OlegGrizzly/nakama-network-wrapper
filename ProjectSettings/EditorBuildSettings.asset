@@ -1,0 +1,14 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Packages/com.heroiclabs.nakama-unity/Editor/WebGL.unity
+    guid: e38e939f366484dbc8e08deaf6c5978b
+  - enabled: 0
+    path: Packages/com.heroiclabs.nakama-unity/Editor/SampleScene.unity
+    guid: 9c0ce5994ac4b4970ab7e47eeed0b1f6
+  m_configObjects: {}
