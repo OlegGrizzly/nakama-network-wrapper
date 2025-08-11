@@ -1,10 +1,11 @@
 {
   "dependencies": {
+    "com.heroiclabs.nakama-unity": "https://github.com/heroiclabs/nakama-unity.git?path=/Packages/Nakama#v3.17.0",
     "com.unity.ai.navigation": "1.1.7",
     "com.unity.ide.rider": "3.0.36",
+    "com.unity.test-framework": "1.1.33",
     "com.unity.modules.jsonserialize": "1.0.0",
     "com.unity.modules.ui": "1.0.0",
-    "com.unity.modules.unitywebrequest": "1.0.0",
-    "com.heroiclabs.nakama-unity": "https://github.com/heroiclabs/nakama-unity.git?path=/Packages/Nakama#v3.17.0"
+    "com.unity.modules.unitywebrequest": "1.0.0"
   }
 }

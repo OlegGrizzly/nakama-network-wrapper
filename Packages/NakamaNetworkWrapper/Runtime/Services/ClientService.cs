@@ -18,6 +18,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _client = new Client(config.Scheme, config.Host, config.Port, config.ServerKey, UnityWebRequestAdapter.Instance, config.AutoRefreshSession);
+            _client.GlobalRetryConfiguration = _config.GetRetryConfiguration();
         }
         
         public IClient Client => _client;
@@ -96,7 +97,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void Connecting()
         {
-            Debug.Log("<color=orange>Connecting</color>");
+            Debug.Log("<color=orange>Connecting...</color>");
             OnConnecting?.Invoke();
         }
 

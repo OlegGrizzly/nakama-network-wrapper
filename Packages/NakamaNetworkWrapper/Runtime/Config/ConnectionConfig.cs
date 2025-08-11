@@ -62,7 +62,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         
         public RetryConfiguration GetRetryConfiguration()
         {
-            return new RetryConfiguration(maxRetries, baseDelayMs);
+            return new RetryConfiguration(maxRetries, baseDelayMs, delegate
+            {
+                Debug.Log("<color=orange>Retrying...</color>");
+            });
         }
 
         #if UNITY_EDITOR

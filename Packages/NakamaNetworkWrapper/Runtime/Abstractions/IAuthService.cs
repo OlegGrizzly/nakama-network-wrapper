@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Nakama;
@@ -7,6 +8,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
 {
     public interface IAuthService
     {
+        event Action<ISession> OnAuthenticated;
+        
+        event Action<Exception> OnAuthenticationFailed;
+        
+        event Action OnLoggedOut;
+        
         Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null);
         
         Task LogoutAsync();

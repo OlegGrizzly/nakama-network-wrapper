@@ -18,7 +18,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
             _clientService = new ClientService(config);
             _authService = new AuthService(_clientService);
             
-            await _authService.LoginAsync(AuthType.Custom, "OlegGrizzly");
+            await _authService.LoginAsync(AuthType.Custom, "00000000-0000-0000-0000-000000000000", "OlegGrizzly");
         }
     }
 }

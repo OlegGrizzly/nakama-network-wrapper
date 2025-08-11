@@ -7,10 +7,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
 {
     public interface IClientService : IDisposable
     {
-        Task ConnectAsync(ISession session);
-        
-        Task DisconnectAsync();
-        
         event Action OnConnecting;
         
         event Action OnConnected;
@@ -18,6 +14,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         event Action OnDisconnected;
         
         event Action<Exception> OnReceivedError;
+        
+        Task ConnectAsync(ISession session);
+        
+        Task DisconnectAsync();
         
         IClient Client { get; }
         
