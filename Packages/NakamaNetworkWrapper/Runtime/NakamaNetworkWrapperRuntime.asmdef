@@ -1,4 +1,7 @@
 {
-  "name": "NakamaNetworkWrapper.Runtime",
-  "rootNamespace": "OlegGrizzly.NakamaNetworkWrapper"
+    "name": "NakamaNetworkWrapper.Runtime",
+    "rootNamespace": "OlegGrizzly.NakamaNetworkWrapper",
+    "references": [
+        "NakamaRuntime"
+    ]
 }
