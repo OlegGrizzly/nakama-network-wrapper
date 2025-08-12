@@ -32,9 +32,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {
+            Debug.Log($"<color=cyan>DeviceID: {id}</color>");
+
             await _gate.WaitAsync();
             try
             {
+                if (IsAuthenticated)
+                {
+                    return CurrentSession;
+                }
+                
                 ISession session;
                 switch (type)
                 {
@@ -69,10 +76,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public async Task LogoutAsync()
         {
+            if (CurrentSession == null)
+            {
+                return;
+            }
+
             await _gate.WaitAsync();
             try
             {
                 await _clientService.DisconnectAsync();
+
                 CurrentSession = null;
                 _tokenPersistence?.Clear();
 

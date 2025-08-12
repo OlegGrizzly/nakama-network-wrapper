@@ -40,6 +40,8 @@ namespace Samples.Example
 
             _clientService = new ClientService(config);
             _deviceIdProvider = new DeviceIdProvider();
+            var deviceId = _deviceIdProvider.GetDeviceId();
+            SetStatus($"DeviceID: {deviceId}", Color.cyan);
             
             var tokenPersistence = new PlayerPrefsTokenPersistence();
             _authService = new AuthService(_clientService, tokenPersistence);
@@ -79,7 +81,6 @@ namespace Samples.Example
             if (!restored)
             {
                 connectButton.interactable = false;
-                var deviceId = _deviceIdProvider.GetDeviceId();
                 await _authService.LoginAsync(AuthType.Custom, deviceId);
             }
             else
@@ -91,9 +92,9 @@ namespace Samples.Example
         private async void OnConnectClicked()
         {
             connectButton.interactable = false;
-            SetStatus("Connecting…", Color.yellow);
             
             var id = _deviceIdProvider.GetDeviceId();
+            SetStatus($"DeviceID: {id}", Color.cyan);
             await _authService.LoginAsync(AuthType.Custom, id);
         }
 
