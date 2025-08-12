@@ -59,16 +59,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         
         public int BaseDelayMs => baseDelayMs;
 
-        public CancellationToken GetCancellationToken()
+        public CancellationTokenSource GetCancellationTokenSource()
         {
-            return new CancellationTokenSource(TimeSpan.FromSeconds(connectTimeout)).Token;
+            return new CancellationTokenSource(TimeSpan.FromSeconds(connectTimeout));
         }
         
-        public RetryConfiguration GetRetryConfiguration()
+        public RetryConfiguration GetRetryConfiguration(Action onRetrying = null)
         {
             return new RetryConfiguration(baseDelayMs, maxRetries, delegate
             {
-                Debug.Log("<color=orange>Retrying...</color>");
+                onRetrying?.Invoke();
             });
         }
 

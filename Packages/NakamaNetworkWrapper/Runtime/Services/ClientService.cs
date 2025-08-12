@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
@@ -13,23 +14,28 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private ISocket _socket;
         private readonly ConnectionConfig _config;
         private bool _disposed;
+        private CancellationTokenSource _shutdownCts;
         
         public ClientService(ConnectionConfig config)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
+            
             _client = new Client(config.Scheme, config.Host, config.Port, config.ServerKey, UnityWebRequestAdapter.Instance, config.AutoRefreshSession);
-            _client.GlobalRetryConfiguration = _config.GetRetryConfiguration();
+            _client.GlobalRetryConfiguration = _config.GetRetryConfiguration(Retrying);
+            
+            _shutdownCts = new CancellationTokenSource();
         }
         
         public IClient Client => _client;
         public ISocket Socket => _socket;
         public ConnectionConfig Config => _config;
-        
         public bool IsConnected => _socket?.IsConnected == true;
+        public CancellationToken ShutdownToken => _shutdownCts.Token;
         
         public event Action OnConnecting;
         public event Action OnConnected;
         public event Action OnDisconnected;
+        public event Action OnRetrying;
         public event Action<Exception> OnReceivedError;
         
         public async Task ConnectAsync(ISession session)
@@ -79,6 +85,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     _socket = null;
                 }
             }
+            
+            _shutdownCts.Cancel();
+            _shutdownCts.Dispose();
+            _shutdownCts = new CancellationTokenSource();
         }
         
         private void AttachSocketEvents(ISocket socket)
@@ -115,6 +125,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             OnDisconnected?.Invoke();
         }
 
+        private void Retrying()
+        {
+            Debug.Log("<color=orange>Retrying...</color>");
+            OnRetrying?.Invoke();
+        }
+
         private void ReceivedError(Exception error)
         {
             Debug.LogError(error);
@@ -124,7 +140,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public void Dispose()
         {
             if (_disposed) return;
+            
             _disposed = true;
+            
+            _shutdownCts.Cancel();
+            _shutdownCts.Dispose();
 
             if (_socket != null)
             {

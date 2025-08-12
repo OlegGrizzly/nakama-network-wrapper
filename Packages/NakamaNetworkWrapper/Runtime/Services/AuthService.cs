@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System.Threading;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using OlegGrizzly.NakamaNetworkWrapper.Common;
@@ -13,6 +14,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
     {
         private readonly IClientService _clientService;
         private readonly ITokenPersistence _tokenPersistence;
+        private readonly SemaphoreSlim _gate = new(1,1);
         
         public AuthService(IClientService clientService, ITokenPersistence tokenPersistence = null)
         {
@@ -30,13 +32,14 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {
+            await _gate.WaitAsync();
             try
             {
                 ISession session;
                 switch (type)
                 {
                     case AuthType.Custom:
-                        session = await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars);
+                        session = await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: _clientService.ShutdownToken);
                         break;
                     
                     default:
@@ -58,58 +61,78 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 AuthenticationFailed(ex);
                 throw;
             }
+            finally
+            {
+                _gate.Release();
+            }
         }
 
         public async Task LogoutAsync()
         {
-            await _clientService.DisconnectAsync();
-            CurrentSession = null;
-            _tokenPersistence?.Clear();
+            await _gate.WaitAsync();
+            try
+            {
+                await _clientService.DisconnectAsync();
+                CurrentSession = null;
+                _tokenPersistence?.Clear();
 
-            LoggedOut();
+                LoggedOut();
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
         
         public async Task<bool> TryRestoreSessionAsync()
         {
-            if (_tokenPersistence is not { HasToken: true })
-            {
-                return false;
-            }
-
-            if (!_tokenPersistence.TryLoad(out var authToken, out var refreshToken))
-            {
-                return false;
-            }
-
+            await _gate.WaitAsync();
             try
             {
-                var session = Session.Restore(authToken, refreshToken);
-                
-                if (session.IsExpired && !string.IsNullOrEmpty(session.RefreshToken))
+                if (_tokenPersistence is not { HasToken: true })
                 {
-                    session = await _clientService.Client.SessionRefreshAsync(session);
-                    _tokenPersistence.Save(session.AuthToken, session.RefreshToken);
-                }
-
-                if (session.IsExpired)
-                {
-                    _tokenPersistence.Clear();
                     return false;
                 }
 
-                await _clientService.ConnectAsync(session);
+                if (!_tokenPersistence.TryLoad(out var authToken, out var refreshToken))
+                {
+                    return false;
+                }
 
-                CurrentSession = session;
-                Authenticated(session);
-                
-                return true;
+                try
+                {
+                    var session = Session.Restore(authToken, refreshToken);
+                    
+                    if (session.IsExpired && !string.IsNullOrEmpty(session.RefreshToken))
+                    {
+                        session = await _clientService.Client.SessionRefreshAsync(session);
+                        _tokenPersistence.Save(session.AuthToken, session.RefreshToken);
+                    }
+
+                    if (session.IsExpired)
+                    {
+                        _tokenPersistence.Clear();
+                        return false;
+                    }
+
+                    await _clientService.ConnectAsync(session);
+
+                    CurrentSession = session;
+                    Authenticated(session);
+                    
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to restore session: {ex.Message}");
+                    _tokenPersistence.Clear();
+                    
+                    return false;
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                Debug.LogWarning($"Failed to restore session: {ex.Message}");
-                _tokenPersistence.Clear();
-                
-                return false;
+                _gate.Release();
             }
         }
         

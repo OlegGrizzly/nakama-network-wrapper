@@ -4,9 +4,10 @@
     "com.unity.ai.navigation": "1.1.7",
     "com.unity.ide.rider": "3.0.36",
     "com.unity.test-framework": "1.1.33",
+    "com.unity.ugui": "1.0.0",
+    "net.tnrd.nsubstitute": "https://github.com/Thundernerd/Unity3D-NSubstitute.git",
     "com.unity.modules.jsonserialize": "1.0.0",
     "com.unity.modules.ui": "1.0.0",
-    "com.unity.modules.unitywebrequest": "1.0.0",
-    "net.tnrd.nsubstitute": "https://github.com/Thundernerd/Unity3D-NSubstitute.git"
+    "com.unity.modules.unitywebrequest": "1.0.0"
   }
 }

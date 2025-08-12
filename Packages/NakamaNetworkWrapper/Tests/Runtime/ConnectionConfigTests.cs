@@ -48,11 +48,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Tests.Tests.Runtime
             
             SetPrivateField(config, "connectTimeout", 1);
 
-            var token = config.GetCancellationToken();
-            Assert.IsFalse(token.IsCancellationRequested, "Token should be active immediately after creation.");
+            var cts = config.GetCancellationTokenSource();
+            Assert.IsFalse(cts.Token.IsCancellationRequested, "Token should be active immediately after creation.");
             
             Thread.Sleep(TimeSpan.FromSeconds(1.6));
-            Assert.IsTrue(token.IsCancellationRequested, "Token should be cancelled after connectTimeout expires.");
+            Assert.IsTrue(cts.Token.IsCancellationRequested, "Token should be cancelled after connectTimeout expires.");
         }
         
         [Test]

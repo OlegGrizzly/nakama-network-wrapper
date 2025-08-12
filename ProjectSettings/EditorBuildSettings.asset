@@ -6,9 +6,6 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Packages/com.heroiclabs.nakama-unity/Editor/WebGL.unity
-    guid: e38e939f366484dbc8e08deaf6c5978b
-  - enabled: 0
-    path: Packages/com.heroiclabs.nakama-unity/Editor/SampleScene.unity
-    guid: 9c0ce5994ac4b4970ab7e47eeed0b1f6
+    path: Packages/com.oleggrizzly.network/Samples/Example/ExampleScene.unity
+    guid: 9117e028ab4be4c7c908cb4e99a39d13
   m_configObjects: {}

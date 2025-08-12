@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Config;
@@ -13,6 +14,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         
         event Action OnDisconnected;
         
+        event Action OnRetrying;
+        
         event Action<Exception> OnReceivedError;
         
         Task ConnectAsync(ISession session);
@@ -26,5 +29,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         ConnectionConfig Config { get; }
         
         bool IsConnected { get; }
+        
+        CancellationToken ShutdownToken { get; }
     }
 }

@@ -1,0 +1,9 @@
+{
+	"name": "NakamaNetworkWrapper.Samples.Example",
+	"references": [
+		"NakamaNetworkWrapper.Runtime"
+	],
+	"optionalUnityReferences": [],
+	"includePlatforms": [],
+	"autoReferenced": true
+}
