@@ -2,6 +2,8 @@ using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using OlegGrizzly.NakamaNetworkWrapper.Common;
 using OlegGrizzly.NakamaNetworkWrapper.Config;
 using OlegGrizzly.NakamaNetworkWrapper.Services;
+using OlegGrizzly.NakamaNetworkWrapper.Persistence;
+using OlegGrizzly.NakamaNetworkWrapper.Utils;
 using UnityEngine;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
@@ -16,9 +18,17 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
         private async void Start()
         {
             _clientService = new ClientService(config);
-            _authService = new AuthService(_clientService);
+            var tokenPersistence = new PlayerPrefsTokenPersistence();
+            var deviceIdProvider = new DeviceIdProvider();
+
+            _authService = new AuthService(_clientService, tokenPersistence);
             
-            await _authService.LoginAsync(AuthType.Custom, "00000000-0000-0000-0000-000000000000", "OlegGrizzly");
+            var restored = await _authService.TryRestoreSessionAsync();
+            if (!restored)
+            {
+                var deviceId = deviceIdProvider.GetDeviceId();
+                await _authService.LoginAsync(AuthType.Custom, deviceId);
+            }
         }
     }
 }
