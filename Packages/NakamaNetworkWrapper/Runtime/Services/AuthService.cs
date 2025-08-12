@@ -41,16 +41,17 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                         throw new ArgumentOutOfRangeException(nameof(type));
                 }
 
-                CurrentSession = session;
-            
                 await _clientService.ConnectAsync(session);
 
+                CurrentSession = session;
+            
                 Authenticated(session);
             
                 return session;
             }
             catch (Exception ex) when (ex is ApiResponseException or TaskCanceledException or HttpRequestException)
             {
+                CurrentSession = null;
                 AuthenticationFailed(ex);
                 throw;
             }

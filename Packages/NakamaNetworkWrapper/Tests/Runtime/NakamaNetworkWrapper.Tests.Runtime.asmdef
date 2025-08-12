@@ -1,23 +1,15 @@
 {
-  "name": "NakamaNetworkWrapper.Tests.Runtime",
-  "rootNamespace": "OlegGrizzly.NakamaNetworkWrapper.Tests",
-  "references": [
-    "NakamaNetworkWrapper.Runtime",
-    "NakamaRuntime"
-  ],
-  "optionalUnityReferences": [
-    "TestAssemblies"
-  ],
-  "includePlatforms": [],
-  "excludePlatforms": [],
-  "allowUnsafeCode": false,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": true,
-  "defineConstraints": [
-    "UNITY_INCLUDE_TESTS"
-  ],
-  "versionDefines": [],
-  "noEngineReferences": false,
-  "isTestAssembly": true
+    "name": "NakamaNetworkWrapper.Tests.Runtime",
+    "rootNamespace": "OlegGrizzly.NakamaNetworkWrapper.Tests",
+    "references": [
+        "NakamaNetworkWrapper.Runtime",
+        "NakamaRuntime",
+        "TNRD.NSubstitute"
+    ],
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Nakama.dll"
+    ],
+    "optionalUnityReferences": [ "TestAssemblies" ],
+    "isTestAssembly": true
 }

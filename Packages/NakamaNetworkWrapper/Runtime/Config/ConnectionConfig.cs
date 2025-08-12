@@ -3,6 +3,10 @@ using System.Threading;
 using Nakama;
 using UnityEngine;
 
+#if UNITY_EDITOR
+using System.Text.RegularExpressions;
+#endif
+
 namespace OlegGrizzly.NakamaNetworkWrapper.Config
 {
     [CreateAssetMenu(menuName = "Nakama/Connection Config", fileName = "NakamaConnectionConfig")]
@@ -35,7 +39,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         private int maxRetries = 3;
 
         [SerializeField]
-        private int baseDelayMs = 1;
+        private int baseDelayMs = 1000;
         
         public string Host => host;
         
@@ -62,7 +66,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         
         public RetryConfiguration GetRetryConfiguration()
         {
-            return new RetryConfiguration(maxRetries, baseDelayMs, delegate
+            return new RetryConfiguration(baseDelayMs, maxRetries, delegate
             {
                 Debug.Log("<color=orange>Retrying...</color>");
             });
@@ -71,7 +75,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         #if UNITY_EDITOR
         private void OnValidate()
         {
-            host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
+            host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : Regex.Replace(host.Trim(), "\\s+", "");
             port = Mathf.Clamp(port, 1, 65535);
             
             if (string.IsNullOrWhiteSpace(serverKey))

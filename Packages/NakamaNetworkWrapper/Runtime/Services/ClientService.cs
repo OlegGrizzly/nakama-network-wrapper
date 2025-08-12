@@ -42,7 +42,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 return;
             }
 
-            _socket = _client.NewSocket(true);
+            _socket ??= _client.NewSocket(true);
+            
+            DetachSocketEvents(_socket);
             AttachSocketEvents(_socket);
 
             Connecting();
