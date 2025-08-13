@@ -1,3 +1,5 @@
+using System;
+using System.Threading.Tasks;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using OlegGrizzly.NakamaNetworkWrapper.Common;
 using OlegGrizzly.NakamaNetworkWrapper.Config;
@@ -21,6 +23,7 @@ namespace Samples.Example
         private IClientService _clientService;
         private IDeviceIdProvider _deviceIdProvider;
         private IAuthService _authService;
+        private IStorageService _storageService;
         private ConnectionStateMachine _stateMachine;
 
         private void Awake()
@@ -45,6 +48,7 @@ namespace Samples.Example
             
             var tokenPersistence = new PlayerPrefsTokenPersistence();
             _authService = new AuthService(_clientService, tokenPersistence);
+            _storageService = new StorageService(_clientService, _authService);
             
             _stateMachine  = new ConnectionStateMachine(_authService, _clientService);
             _stateMachine.OnStateChanged += UpdateUiByState;
@@ -57,6 +61,8 @@ namespace Samples.Example
                 var deviceId = _deviceIdProvider.GetDeviceId();
                 await _authService.LoginAsync(AuthType.Custom, deviceId);
             }
+            
+            await TestStorageAsync();
         }
 
         private async void OnConnectClicked()
@@ -64,6 +70,8 @@ namespace Samples.Example
             var id = _deviceIdProvider.GetDeviceId();
             SetStatus($"DeviceID: {id}", Color.cyan);
             await _authService.LoginAsync(AuthType.Custom, id);
+            
+            await TestStorageAsync();
         }
 
         private async void OnDisconnectClicked()
@@ -113,6 +121,26 @@ namespace Samples.Example
         private void OnDestroy()
         {
             _stateMachine?.Dispose();
+        }
+
+        private async Task TestStorageAsync()
+        {
+            try
+            {
+                var collection = "inventory";
+                var key = "v1";
+                var json = "{\"coins\":123,\"items\":[\"sword\",\"potion\"]}";
+
+                await _storageService.WriteAsync(collection, key, json);
+                AddLog("Storage write OK", Color.white);
+
+                var readBack = await _storageService.ReadAsync<string>(collection, key);
+                AddLog($"Storage read: {readBack}", Color.white);
+            }
+            catch (Exception ex)
+            {
+                AddLog($"Storage error: {ex.Message}", Color.red);
+            }
         }
     }
 }
