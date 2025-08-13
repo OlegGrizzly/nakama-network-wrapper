@@ -151,6 +151,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private void Authenticated(ISession session)
         {
+            Debug.LogWarning("Authenticated");
+            
             Debug.Log("<color=green>Authenticated</color>");
             OnAuthenticated?.Invoke(session);
         }

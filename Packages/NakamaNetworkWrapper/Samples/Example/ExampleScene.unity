@@ -1286,7 +1286,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bc71c93604ff24a1e9be26cdd7b706ae, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  config: {fileID: 11400000, guid: 36ad1755e91054de18f5764419f1f49c, type: 2}
+  config: {fileID: 11400000, guid: 342b3ca8000104205ad12a786bc3143e, type: 2}
   connectButton: {fileID: 1472407086}
   disconnectButton: {fileID: 578595705}
   scrollRect: {fileID: 1366305272}

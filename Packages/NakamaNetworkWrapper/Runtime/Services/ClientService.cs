@@ -48,7 +48,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 return;
             }
 
-            _socket ??= _client.NewSocket(true);
+            _socket = _client.NewSocket(true);
             
             DetachSocketEvents(_socket);
             AttachSocketEvents(_socket);
@@ -57,7 +57,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             try
             {
-                await _socket.ConnectAsync(session, _config.AppearOnline, _config.ConnectTimeout).ConfigureAwait(false);
+                await _socket.ConnectAsync(session, _config.AppearOnline, _config.ConnectTimeout);
             }
             catch (Exception ex)
             {
@@ -150,7 +150,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 DetachSocketEvents(_socket);
                 
-                _socket.CloseAsync().ConfigureAwait(false);
+                _socket.CloseAsync();
                 _socket = null;
             }
         }

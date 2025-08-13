@@ -51,6 +51,7 @@ namespace Samples.Example
             _clientService.OnDisconnected += () =>
             {
                 SetStatus("Disconnected", Color.red);
+                
                 connectButton.interactable = true;
                 disconnectButton.interactable = false;
             };
@@ -59,12 +60,16 @@ namespace Samples.Example
 
             _authService.OnAuthenticated += _ =>
             {
+                SetStatus("Authenticated", Color.green);
+                
                 connectButton.interactable = false;
                 disconnectButton.interactable = true;
             };
             
             _authService.OnLoggedOut += () =>
             {
+                SetStatus("LoggedOut", Color.red);
+                
                 connectButton.interactable = true;
                 disconnectButton.interactable = false;
             };
@@ -73,6 +78,7 @@ namespace Samples.Example
             _authService.OnAuthenticationFailed += ex =>
             {
                 SetStatus($"Auth failed: {ex.Message}", Color.red);
+                
                 connectButton.interactable = true;
                 disconnectButton.interactable = false;
             };
