@@ -1,6 +1,7 @@
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using OlegGrizzly.NakamaNetworkWrapper.Common;
 using OlegGrizzly.NakamaNetworkWrapper.Config;
+using OlegGrizzly.NakamaNetworkWrapper.Controllers;
 using OlegGrizzly.NakamaNetworkWrapper.Persistence;
 using OlegGrizzly.NakamaNetworkWrapper.Services;
 using OlegGrizzly.NakamaNetworkWrapper.Utils;
@@ -20,6 +21,7 @@ namespace Samples.Example
         private IClientService _clientService;
         private IDeviceIdProvider _deviceIdProvider;
         private IAuthService _authService;
+        private ConnectionStateMachine _stateMachine;
 
         private void Awake()
         {
@@ -40,65 +42,25 @@ namespace Samples.Example
 
             _clientService = new ClientService(config);
             _deviceIdProvider = new DeviceIdProvider();
-            var deviceId = _deviceIdProvider.GetDeviceId();
-            SetStatus($"DeviceID: {deviceId}", Color.cyan);
             
             var tokenPersistence = new PlayerPrefsTokenPersistence();
             _authService = new AuthService(_clientService, tokenPersistence);
             
-            _clientService.OnConnecting += () => SetStatus("Connecting…", Color.yellow);
-            _clientService.OnConnected += () => SetStatus("Connected", Color.green);
-            _clientService.OnDisconnected += () =>
-            {
-                SetStatus("Disconnected", Color.red);
-                
-                connectButton.interactable = true;
-                disconnectButton.interactable = false;
-            };
-            _clientService.OnRetrying += () => SetStatus("Retrying…", Color.yellow);
-            _clientService.OnReceivedError += ex => SetStatus($"Error: {ex.Message}", Color.red);
+            _stateMachine  = new ConnectionStateMachine(_authService, _clientService);
+            _stateMachine.OnStateChanged += UpdateUiByState;
 
-            _authService.OnAuthenticated += _ =>
-            {
-                SetStatus("Authenticated", Color.green);
-                
-                connectButton.interactable = false;
-                disconnectButton.interactable = true;
-            };
-            
-            _authService.OnLoggedOut += () =>
-            {
-                SetStatus("LoggedOut", Color.red);
-                
-                connectButton.interactable = true;
-                disconnectButton.interactable = false;
-            };
-            
-            _authService.OnAuthenticationFailed += ex => SetStatus($"Auth failed: {ex.Message}", Color.red);
-            _authService.OnAuthenticationFailed += ex =>
-            {
-                SetStatus($"Auth failed: {ex.Message}", Color.red);
-                
-                connectButton.interactable = true;
-                disconnectButton.interactable = false;
-            };
+            UpdateUiByState(_stateMachine.CurrentState);
             
             var restored = await _authService.TryRestoreSessionAsync();
             if (!restored)
             {
-                connectButton.interactable = false;
+                var deviceId = _deviceIdProvider.GetDeviceId();
                 await _authService.LoginAsync(AuthType.Custom, deviceId);
-            }
-            else
-            {
-                disconnectButton.interactable = true;
             }
         }
 
         private async void OnConnectClicked()
         {
-            connectButton.interactable = false;
-            
             var id = _deviceIdProvider.GetDeviceId();
             SetStatus($"DeviceID: {id}", Color.cyan);
             await _authService.LoginAsync(AuthType.Custom, id);
@@ -106,7 +68,6 @@ namespace Samples.Example
 
         private async void OnDisconnectClicked()
         {
-            disconnectButton.interactable = false;
             await _authService.LogoutAsync();
         }
 
@@ -121,7 +82,37 @@ namespace Samples.Example
                 scrollRect.verticalNormalizedPosition = 0f;
             }
         }
+        
+        private void UpdateUiByState(ConnectionState state)
+        {
+            switch (state)
+            {
+                case ConnectionState.Connecting:
+                    SetStatus("Connecting…", Color.yellow);
+                    break;
 
+                case ConnectionState.Connected:
+                    SetStatus("Connected", Color.green);
+                    break;
+
+                case ConnectionState.Disconnected:
+                    SetStatus("Disconnected", Color.red);
+                    break;
+
+                case ConnectionState.AuthFailed:
+                    SetStatus("Auth failed", Color.red);
+                    break;
+            }
+            
+            connectButton.interactable = state is ConnectionState.Disconnected or ConnectionState.AuthFailed;
+            disconnectButton.interactable = state == ConnectionState.Connected;
+        }
+        
         private void SetStatus(string text, Color color) => AddLog(text, color);
+
+        private void OnDestroy()
+        {
+            _stateMachine?.Dispose();
+        }
     }
 }

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
 using System.Threading.Tasks;
 using System.Threading;
 using Nakama;
@@ -32,14 +31,29 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {
-            Debug.Log($"<color=cyan>DeviceID: {id}</color>");
-
             await _gate.WaitAsync();
             try
             {
                 if (IsAuthenticated)
                 {
-                    return CurrentSession;
+                    if (_clientService.IsConnected)
+                    {
+                        return CurrentSession;
+                    }
+
+                    try
+                    {
+                        await _clientService.ConnectAsync(CurrentSession);
+                        
+                        Authenticated(CurrentSession);
+
+                        return CurrentSession;
+                    }
+                    catch (Exception ex)
+                    {
+                        AuthenticationFailed(ex);
+                        throw;
+                    }
                 }
                 
                 ISession session;
@@ -62,7 +76,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
                 return session;
             }
-            catch (Exception ex) when (ex is ApiResponseException or TaskCanceledException or HttpRequestException)
+            catch (Exception ex)
             {
                 CurrentSession = null;
                 AuthenticationFailed(ex);
@@ -151,9 +165,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private void Authenticated(ISession session)
         {
-            Debug.LogWarning("Authenticated");
-            
-            Debug.Log("<color=green>Authenticated</color>");
             OnAuthenticated?.Invoke(session);
         }
         
@@ -165,7 +176,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private void LoggedOut()
         {
-            Debug.Log("<color=red>LoggedOut</color>");
             OnLoggedOut?.Invoke();
         }
     }

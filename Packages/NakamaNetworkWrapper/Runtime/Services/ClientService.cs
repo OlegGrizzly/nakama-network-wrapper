@@ -19,9 +19,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public ClientService(ConnectionConfig config)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
-            
+
             _client = new Client(config.Scheme, config.Host, config.Port, config.ServerKey, UnityWebRequestAdapter.Instance, config.AutoRefreshSession);
             _client.GlobalRetryConfiguration = _config.GetRetryConfiguration(Retrying);
+            _client.Timeout = config.ConnectTimeout;
             
             _shutdownCts = new CancellationTokenSource();
         }
@@ -83,6 +84,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     DetachSocketEvents(_socket);
                     _socket = null;
+                    
+                    #if UNITY_WEBGL && !UNITY_EDITOR
+                    Disconnected();
+                    #endif
                 }
             }
             
@@ -109,26 +114,30 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void Connecting()
         {
-            Debug.Log("<color=orange>Connecting...</color>");
             OnConnecting?.Invoke();
         }
 
         private void Connected()
         {
-            Debug.Log("<color=green>Connected</color>");
             OnConnected?.Invoke();
         }
 
         private void Disconnected()
         {
-            Debug.Log("<color=red>Disconnected</color>");
             OnDisconnected?.Invoke();
         }
 
         private void Retrying()
         {
-            Debug.Log("<color=orange>Retrying...</color>");
+            #if UNITY_WEBGL && !UNITY_EDITOR
+            _shutdownCts.Cancel();
+            _shutdownCts.Dispose();
+            _shutdownCts = new CancellationTokenSource();
+
+            Disconnected();
+            #else
             OnRetrying?.Invoke();
+            #endif
         }
 
         private void ReceivedError(Exception error)
