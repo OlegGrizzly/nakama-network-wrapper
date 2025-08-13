@@ -48,22 +48,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             await _connectionGate.WaitAsync(ShutdownToken);
             try
             {
-                if (_socket is { IsConnected: true })
-                {
-                    return;
-                }
+                if (_socket is { IsConnected: true }) return;
                 
                 if (_socket != null)
                 {
-                    try
-                    {
-                        DetachSocketEvents(_socket);
-                        await _socket.CloseAsync();
-                    }
-                    finally
-                    {
-                        _socket = null;
-                    }
+                    await CloseAndClearSocketAsync();
                 }
 
                 _socket = _client.NewSocket(true);
@@ -99,24 +88,14 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 if (_socket != null)
                 {
-                    try
-                    {
-                        await _socket.CloseAsync();
-                    }
-                    finally
-                    {
-                        DetachSocketEvents(_socket);
-                        _socket = null;
+                    await CloseAndClearSocketAsync();
 
-                        #if UNITY_WEBGL && !UNITY_EDITOR
-                        Disconnected();
-                        #endif
-                    }
+                    #if UNITY_WEBGL && !UNITY_EDITOR
+                    Disconnected();
+                    #endif
                 }
 
-                _shutdownCts.Cancel();
-                _shutdownCts.Dispose();
-                _shutdownCts = new CancellationTokenSource();
+                ResetShutdownCts();
             }
             finally
             {
@@ -140,28 +119,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             socket.ReceivedError -= ReceivedError;
         }
 
-        private void Connecting()
-        {
-            OnConnecting?.Invoke();
-        }
+        private void Connecting() => OnConnecting?.Invoke();
 
-        private void Connected()
-        {
-            OnConnected?.Invoke();
-        }
+        private void Connected() => OnConnected?.Invoke();
 
-        private void Disconnected()
-        {
-            OnDisconnected?.Invoke();
-        }
+        private void Disconnected() => OnDisconnected?.Invoke();
 
         private void Retrying()
         {
             #if UNITY_WEBGL && !UNITY_EDITOR
-            _shutdownCts.Cancel();
-            _shutdownCts.Dispose();
-            _shutdownCts = new CancellationTokenSource();
-
+            ResetShutdownCts();
             Disconnected();
             #else
             OnRetrying?.Invoke();
@@ -189,6 +156,34 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 
                 _ = _socket.CloseAsync();
                 _socket = null;
+            }
+
+            _connectionGate.Dispose();
+        }
+
+        private void ResetShutdownCts()
+        {
+            _shutdownCts.Cancel();
+            _shutdownCts.Dispose();
+            _shutdownCts = new CancellationTokenSource();
+        }
+
+        private async Task CloseAndClearSocketAsync()
+        {
+            var socketToClose = _socket;
+            if (socketToClose == null) return;
+
+            try
+            {
+                DetachSocketEvents(socketToClose);
+                await socketToClose.CloseAsync();
+            }
+            finally
+            {
+                if (ReferenceEquals(_socket, socketToClose))
+                {
+                    _socket = null;
+                }
             }
         }
     }

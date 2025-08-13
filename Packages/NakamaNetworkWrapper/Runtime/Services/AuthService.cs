@@ -43,13 +43,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
                     try
                     {
-                        if (CurrentSession.IsExpired && !string.IsNullOrEmpty(CurrentSession.RefreshToken))
-                        {
-                            var refreshed = await _clientService.Client.SessionRefreshAsync(CurrentSession, canceller: _clientService.ShutdownToken);
-                            CurrentSession = refreshed;
-                            _tokenPersistence?.Save(refreshed.AuthToken, refreshed.RefreshToken);
-                        }
-
+                        await RefreshSessionIfNeededAsync();
+                        
                         await _clientService.ConnectAsync(CurrentSession);
                         
                         Authenticated(CurrentSession);
@@ -63,22 +58,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     }
                 }
                 
-                ISession session;
-                switch (type)
-                {
-                    case AuthType.Custom:
-                        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Custom id must be provided", nameof(id));
-                        session = await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: _clientService.ShutdownToken);
-                        break;
-                    
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(type));
-                }
-
+                var session = await AuthenticateAsync(type, id, username, vars);
                 await _clientService.ConnectAsync(session);
 
                 CurrentSession = session;
-                _tokenPersistence?.Save(session.AuthToken, session.RefreshToken);
+                SaveTokensIfPossible(session);
             
                 Authenticated(session);
             
@@ -137,12 +121,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 try
                 {
                     var session = Session.Restore(authToken, refreshToken);
-                    
-                    if (session.IsExpired && !string.IsNullOrEmpty(session.RefreshToken))
-                    {
-                        session = await _clientService.Client.SessionRefreshAsync(session, canceller: _clientService.ShutdownToken);
-                        _tokenPersistence.Save(session.AuthToken, session.RefreshToken);
-                    }
+                    session = await RefreshIfExpiredAsync(session);
 
                     if (session.IsExpired)
                     {
@@ -171,20 +150,57 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
         }
         
-        private void Authenticated(ISession session)
-        {
-            OnAuthenticated?.Invoke(session);
-        }
-        
+        private void Authenticated(ISession session) => OnAuthenticated?.Invoke(session);
+
         private void AuthenticationFailed(Exception ex)
         {
             Debug.LogError($"Authentication Failed: {ex.GetType().Name} - {ex.Message}");
             OnAuthenticationFailed?.Invoke(ex);
         }
         
-        private void LoggedOut()
+        private void LoggedOut() => OnLoggedOut?.Invoke();
+
+        private async Task RefreshSessionIfNeededAsync()
         {
-            OnLoggedOut?.Invoke();
+            if (CurrentSession == null) return;
+            if (!CurrentSession.IsExpired) return;
+            if (string.IsNullOrEmpty(CurrentSession.RefreshToken)) return;
+
+            var refreshed = await _clientService.Client.SessionRefreshAsync(CurrentSession, canceller: _clientService.ShutdownToken);
+            CurrentSession = refreshed;
+            
+            SaveTokensIfPossible(refreshed);
+        }
+
+        private async Task<ISession> AuthenticateAsync(AuthType type, string id, string username, Dictionary<string, string> vars)
+        {
+            switch (type)
+            {
+                case AuthType.Custom:
+                    if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Custom id must be provided", nameof(id));
+                    return await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: _clientService.ShutdownToken);
+                
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        private async Task<ISession> RefreshIfExpiredAsync(ISession session)
+        {
+            if (session.IsExpired && !string.IsNullOrEmpty(session.RefreshToken))
+            {
+                var refreshed = await _clientService.Client.SessionRefreshAsync(session, canceller: _clientService.ShutdownToken);
+                SaveTokensIfPossible(refreshed);
+                
+                return refreshed;
+            }
+
+            return session;
+        }
+
+        private void SaveTokensIfPossible(ISession session)
+        {
+            _tokenPersistence?.Save(session.AuthToken, session.RefreshToken);
         }
     }
 }

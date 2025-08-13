@@ -13,7 +13,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
 
         public ConnectionStateMachine(IAuthService authService, IClientService clientService)
         {
-            _authService   = authService  ?? throw new ArgumentNullException(nameof(authService));
+            _authService = authService  ?? throw new ArgumentNullException(nameof(authService));
             _clientService = clientService ?? throw new ArgumentNullException(nameof(clientService));
             
             _clientService.OnConnecting += Connecting;
@@ -27,8 +27,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
 
             CurrentState = ConnectionState.Disconnected;
         }
-
+        
         public ConnectionState CurrentState { get; private set; }
+        
         public event Action<ConnectionState> OnStateChanged;
 
         private void SetState(ConnectionState newState)
@@ -41,11 +42,17 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
         }
 
         private void Connecting() => SetState(ConnectionState.Connecting);
+        
         private void Retrying() => SetState(ConnectionState.Connecting);
+        
         private void Connected() => SetState(ConnectionState.Connected);
+        
         private void Disconnected() => SetState(ConnectionState.Disconnected);
+        
         private void Authenticated(ISession _) => SetState(ConnectionState.Connected);
+        
         private void AuthFailed(Exception _) => SetState(ConnectionState.AuthFailed);
+        
         private void LoggedOut() => SetState(ConnectionState.Disconnected);
 
         public void Dispose()
