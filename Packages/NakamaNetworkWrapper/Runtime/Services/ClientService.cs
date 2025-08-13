@@ -15,6 +15,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly ConnectionConfig _config;
         private bool _disposed;
         private CancellationTokenSource _shutdownCts;
+        private readonly SemaphoreSlim _connectionGate = new(1, 1);
         
         public ClientService(ConnectionConfig config)
         {
@@ -44,29 +45,48 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (_disposed) throw new ObjectDisposedException(nameof(ClientService));
             if (session == null) throw new ArgumentNullException(nameof(session));
 
-            if (_socket is { IsConnected: true })
-            {
-                return;
-            }
-
-            _socket = _client.NewSocket(true);
-            
-            DetachSocketEvents(_socket);
-            AttachSocketEvents(_socket);
-
-            Connecting();
-            
+            await _connectionGate.WaitAsync(ShutdownToken);
             try
             {
-                await _socket.ConnectAsync(session, _config.AppearOnline, _config.ConnectTimeout);
+                if (_socket is { IsConnected: true })
+                {
+                    return;
+                }
+                
+                if (_socket != null)
+                {
+                    try
+                    {
+                        DetachSocketEvents(_socket);
+                        await _socket.CloseAsync();
+                    }
+                    finally
+                    {
+                        _socket = null;
+                    }
+                }
+
+                _socket = _client.NewSocket(true);
+                AttachSocketEvents(_socket);
+
+                Connecting();
+
+                try
+                {
+                    await _socket.ConnectAsync(session, _config.AppearOnline, _config.ConnectTimeout);
+                }
+                catch (Exception ex)
+                {
+                    DetachSocketEvents(_socket);
+                    _socket = null;
+
+                    ReceivedError(ex);
+                    throw;
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                DetachSocketEvents(_socket);
-                _socket = null;
-                 
-                ReceivedError(ex);
-                throw;
+                _connectionGate.Release();
             }
         }
         
@@ -74,26 +94,34 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (_disposed) return;
 
-            if (_socket != null)
+            await _connectionGate.WaitAsync(ShutdownToken);
+            try
             {
-                try
+                if (_socket != null)
                 {
-                    await _socket.CloseAsync();
+                    try
+                    {
+                        await _socket.CloseAsync();
+                    }
+                    finally
+                    {
+                        DetachSocketEvents(_socket);
+                        _socket = null;
+
+                        #if UNITY_WEBGL && !UNITY_EDITOR
+                        Disconnected();
+                        #endif
+                    }
                 }
-                finally
-                {
-                    DetachSocketEvents(_socket);
-                    _socket = null;
-                    
-                    #if UNITY_WEBGL && !UNITY_EDITOR
-                    Disconnected();
-                    #endif
-                }
+
+                _shutdownCts.Cancel();
+                _shutdownCts.Dispose();
+                _shutdownCts = new CancellationTokenSource();
             }
-            
-            _shutdownCts.Cancel();
-            _shutdownCts.Dispose();
-            _shutdownCts = new CancellationTokenSource();
+            finally
+            {
+                _connectionGate.Release();
+            }
         }
         
         private void AttachSocketEvents(ISocket socket)
@@ -159,7 +187,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 DetachSocketEvents(_socket);
                 
-                _socket.CloseAsync();
+                _ = _socket.CloseAsync();
                 _socket = null;
             }
         }

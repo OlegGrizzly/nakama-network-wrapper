@@ -43,6 +43,13 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
                     try
                     {
+                        if (CurrentSession.IsExpired && !string.IsNullOrEmpty(CurrentSession.RefreshToken))
+                        {
+                            var refreshed = await _clientService.Client.SessionRefreshAsync(CurrentSession, canceller: _clientService.ShutdownToken);
+                            CurrentSession = refreshed;
+                            _tokenPersistence?.Save(refreshed.AuthToken, refreshed.RefreshToken);
+                        }
+
                         await _clientService.ConnectAsync(CurrentSession);
                         
                         Authenticated(CurrentSession);
@@ -60,6 +67,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 switch (type)
                 {
                     case AuthType.Custom:
+                        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Custom id must be provided", nameof(id));
                         session = await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: _clientService.ShutdownToken);
                         break;
                     
@@ -132,7 +140,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     
                     if (session.IsExpired && !string.IsNullOrEmpty(session.RefreshToken))
                     {
-                        session = await _clientService.Client.SessionRefreshAsync(session);
+                        session = await _clientService.Client.SessionRefreshAsync(session, canceller: _clientService.ShutdownToken);
                         _tokenPersistence.Save(session.AuthToken, session.RefreshToken);
                     }
 

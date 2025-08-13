@@ -9,6 +9,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
     {
         private readonly IAuthService _authService;
         private readonly IClientService _clientService;
+        private bool _disposed;
 
         public ConnectionStateMachine(IAuthService authService, IClientService clientService)
         {
@@ -49,6 +50,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
 
         public void Dispose()
         {
+            if (_disposed) return;
+            
+            _disposed = true;
+
             _clientService.OnConnecting -= Connecting;
             _clientService.OnRetrying -= Retrying;
             _clientService.OnConnected -= Connected;
