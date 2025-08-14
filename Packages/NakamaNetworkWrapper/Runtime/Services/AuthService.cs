@@ -17,13 +17,15 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public AuthService(IClientService clientService, ITokenPersistence tokenPersistence = null)
         {
-            _clientService = clientService;
+            _clientService = clientService ?? throw new ArgumentNullException(nameof(clientService));
             _tokenPersistence = tokenPersistence;
         }
         
         public ISession CurrentSession { get; private set; }
 
         public bool IsAuthenticated => CurrentSession is { IsExpired: false };
+        
+        public IApiAccount Account { get; private set; }
 
         public event Action<ISession> OnAuthenticated;
         public event Action<Exception> OnAuthenticationFailed;
@@ -47,6 +49,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                         
                         await _clientService.ConnectAsync(CurrentSession);
                         
+                        Account = await _clientService.Client.GetAccountAsync(CurrentSession, canceller: _clientService.ShutdownToken);
                         Authenticated(CurrentSession);
 
                         return CurrentSession;
@@ -64,6 +67,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 CurrentSession = session;
                 SaveTokensIfPossible(session);
             
+                Account = await _clientService.Client.GetAccountAsync(session, canceller: _clientService.ShutdownToken);
                 Authenticated(session);
             
                 return session;
@@ -132,6 +136,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     await _clientService.ConnectAsync(session);
 
                     CurrentSession = session;
+                    
+                    Account = await _clientService.Client.GetAccountAsync(session, canceller: _clientService.ShutdownToken);
                     Authenticated(session);
                     
                     return true;

@@ -1,0 +1,11 @@
+{
+	"name": "NakamaNetworkWrapper.Samples.Chat",
+	"references": [
+		"NakamaNetworkWrapper.Runtime"
+	],
+	"optionalUnityReferences": [],
+	"includePlatforms": [],
+	"autoReferenced": true
+}
+
+

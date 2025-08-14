@@ -23,5 +23,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         bool IsAuthenticated { get; }
         
         ISession CurrentSession { get; }
+
+        IApiAccount Account { get; }
     }
 }
