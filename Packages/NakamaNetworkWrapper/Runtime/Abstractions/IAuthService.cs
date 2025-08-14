@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Common;
@@ -22,8 +23,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         
         bool IsAuthenticated { get; }
         
-        ISession CurrentSession { get; }
+        ISession Session { get; }
 
         IApiAccount Account { get; }
+
+        Task UpdateAccountAsync(string username = null, string displayName = null, string avatarUrl = null, string langTag = null, string location = null, string timezone = null, CancellationToken ct = default);
     }
 }

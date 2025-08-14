@@ -21,12 +21,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _tokenPersistence = tokenPersistence;
         }
         
-        public ISession CurrentSession { get; private set; }
+        public ISession Session { get; private set; }
 
-        public bool IsAuthenticated => CurrentSession is { IsExpired: false };
+        public bool IsAuthenticated => Session is { IsExpired: false };
         
         public IApiAccount Account { get; private set; }
-
+        
         public event Action<ISession> OnAuthenticated;
         public event Action<Exception> OnAuthenticationFailed;
         public event Action OnLoggedOut;
@@ -40,19 +40,19 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     if (_clientService.IsConnected)
                     {
-                        return CurrentSession;
+                        return Session;
                     }
 
                     try
                     {
                         await RefreshSessionIfNeededAsync();
                         
-                        await _clientService.ConnectAsync(CurrentSession);
+                        await _clientService.ConnectAsync(Session);
                         
-                        Account = await _clientService.Client.GetAccountAsync(CurrentSession, canceller: _clientService.ShutdownToken);
-                        Authenticated(CurrentSession);
+                        Account = await _clientService.Client.GetAccountAsync(Session, canceller: _clientService.ShutdownToken);
+                        Authenticated(Session);
 
-                        return CurrentSession;
+                        return Session;
                     }
                     catch (Exception ex)
                     {
@@ -64,7 +64,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 var session = await AuthenticateAsync(type, id, username, vars);
                 await _clientService.ConnectAsync(session);
 
-                CurrentSession = session;
+                Session = session;
                 SaveTokensIfPossible(session);
             
                 Account = await _clientService.Client.GetAccountAsync(session, canceller: _clientService.ShutdownToken);
@@ -74,7 +74,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
             catch (Exception ex)
             {
-                CurrentSession = null;
+                Session = null;
                 AuthenticationFailed(ex);
                 throw;
             }
@@ -86,7 +86,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public async Task LogoutAsync()
         {
-            if (CurrentSession == null)
+            if (Session == null)
             {
                 return;
             }
@@ -96,7 +96,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 await _clientService.DisconnectAsync();
 
-                CurrentSession = null;
+                Session = null;
                 _tokenPersistence?.Clear();
 
                 LoggedOut();
@@ -124,7 +124,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
                 try
                 {
-                    var session = Session.Restore(authToken, refreshToken);
+                    var session = Nakama.Session.Restore(authToken, refreshToken);
                     session = await RefreshIfExpiredAsync(session);
 
                     if (session.IsExpired)
@@ -135,7 +135,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
                     await _clientService.ConnectAsync(session);
 
-                    CurrentSession = session;
+                    Session = session;
                     
                     Account = await _clientService.Client.GetAccountAsync(session, canceller: _clientService.ShutdownToken);
                     Authenticated(session);
@@ -156,6 +156,32 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
         }
         
+        public async Task UpdateAccountAsync(string username = null, string displayName = null, string avatarUrl = null, string langTag = null, string location = null, string timezone = null, CancellationToken ct = default)
+        {
+            if (Session == null) throw new InvalidOperationException("Not authenticated");
+
+            await _gate.WaitAsync(ct);
+            try
+            {
+                await _clientService.Client.UpdateAccountAsync(Session, username, displayName, avatarUrl, langTag, location, timezone, canceller: ct);
+                Account = await _clientService.Client.GetAccountAsync(Session, canceller: ct);
+            }
+            catch (ApiResponseException ex)
+            {
+                Debug.LogError($"UpdateAccount failed: {ex.StatusCode} {ex.Message}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"UpdateAccount failed: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        
         private void Authenticated(ISession session) => OnAuthenticated?.Invoke(session);
 
         private void AuthenticationFailed(Exception ex)
@@ -168,12 +194,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private async Task RefreshSessionIfNeededAsync()
         {
-            if (CurrentSession == null) return;
-            if (!CurrentSession.IsExpired) return;
-            if (string.IsNullOrEmpty(CurrentSession.RefreshToken)) return;
+            if (Session == null) return;
+            if (!Session.IsExpired) return;
+            if (string.IsNullOrEmpty(Session.RefreshToken)) return;
 
-            var refreshed = await _clientService.Client.SessionRefreshAsync(CurrentSession, canceller: _clientService.ShutdownToken);
-            CurrentSession = refreshed;
+            var refreshed = await _clientService.Client.SessionRefreshAsync(Session, canceller: _clientService.ShutdownToken);
+            Session = refreshed;
             
             SaveTokensIfPossible(refreshed);
         }

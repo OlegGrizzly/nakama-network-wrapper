@@ -24,7 +24,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(collection)) throw new ArgumentException("Collection is required", nameof(collection));
             if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key is required", nameof(key));
 
-            var session = _authService.CurrentSession ?? throw new InvalidOperationException("Not authenticated");
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
             string json;
             if (value is string s)
@@ -53,7 +53,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(collection)) throw new ArgumentException("Collection is required", nameof(collection));
             if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key is required", nameof(key));
 
-            var session = _authService.CurrentSession ?? throw new InvalidOperationException("Not authenticated");
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
             var id = new StorageObjectId
             {

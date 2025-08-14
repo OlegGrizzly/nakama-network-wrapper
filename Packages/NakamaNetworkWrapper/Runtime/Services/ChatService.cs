@@ -73,7 +73,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
 
-            var session = _authService.CurrentSession ?? throw new InvalidOperationException("Not authenticated");
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
             
             return await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
         }
@@ -214,8 +214,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public async Task PrefetchUsersAsync(string channelId, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(channelId)) return;
-            var session = _authService.CurrentSession ?? throw new InvalidOperationException("Not authenticated");
-            // Ensure participant snapshot exists (seeds from channel if missing)
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
+            
             var participants = GetParticipants(channelId);
             if (participants.Count == 0) return;
             if (!_participantsByChannel.TryGetValue(channelId, out var dict)) return;
