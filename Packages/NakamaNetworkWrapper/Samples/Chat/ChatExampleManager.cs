@@ -278,7 +278,8 @@ namespace Samples.Chat
 
 		private void OnMessageReceived(IApiChannelMessage msg)
 		{
-			var name = msg.Username;
+			var user = _chatService.GetUser(msg.SenderId);
+			var name = user?.DisplayName ?? msg.Username;
 			Log($"[{msg.CreateTime}] {name}: {msg.Content} (id: {msg.MessageId})", Color.white);
 		}
 		
@@ -289,7 +290,8 @@ namespace Samples.Chat
 			var sequence = _forward ? page.Messages : page.Messages.Reverse();
 			foreach (var m in sequence)
 			{
-				var name = m.Username;
+				var user = _chatService.GetUser(m.SenderId);
+				var name = user?.DisplayName ?? m.Username;
 				Log($"[{m.CreateTime}] {name}: {m.Content} (id: {m.MessageId})", Color.grey);
 			}
 		}

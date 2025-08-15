@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using UnityEngine;
+using System.Linq;
+using OlegGrizzly.NakamaNetworkWrapper.Common;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
@@ -14,6 +16,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly IAuthService _authService;
         private readonly Dictionary<string, IChannel> _channels = new();
         private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
+        private readonly Dictionary<string, IApiUser> _allUsers = new();
+        
+        private const int MaxUsersPerRequest = 100;
 
         public ChatService(IClientService clientService, IAuthService authService)
         {
@@ -74,7 +79,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
             
-            return await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
+            var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
+            var userIds = messageList.Messages.Select(m => m.SenderId).Distinct().ToList();
+            await UpdateHistoryUsers(userIds);
+            
+            return messageList;
         }
 
         public async Task UpdateMessageAsync(string channelId, string messageId, string content)
@@ -96,15 +105,18 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             await socket.RemoveChatMessageAsync(channelId, messageId);
         }
-
-        private void RegisterChannel(IChannel channel)
+        
+        public IApiUser GetUser(string userId)
         {
-            Debug.LogWarning("RegisterChannel");
-            
+            return _allUsers.GetValueOrDefault(userId);
+        }
+
+        private async void RegisterChannel(IChannel channel)
+        {
             if (channel == null) return;
             
             _channels[channel.Id] = channel;
-            UpdateChannelPresences(UserPresenceAction.Append, channel.Id, channel.Presences);
+            await UpdatePresenceUsers(UserPresenceAction.Append, channel.Id, channel.Presences);
             
             OnJoinedChannel?.Invoke(channel);
         }
@@ -157,15 +169,15 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             OnMessageReceived?.Invoke(msg);
         }
         
-        private void ReceivedChannelPresence(IChannelPresenceEvent channelPresenceEvent)
+        private async void ReceivedChannelPresence(IChannelPresenceEvent channelPresenceEvent)
         {
-            UpdateChannelPresences(UserPresenceAction.Append, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Joins);
-            UpdateChannelPresences(UserPresenceAction.Remove, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Leaves);
+            await UpdatePresenceUsers(UserPresenceAction.Append, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Joins);
+            await UpdatePresenceUsers(UserPresenceAction.Remove, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Leaves);
             
             OnPresenceChanged?.Invoke(channelPresenceEvent);
         }
         
-        private void UpdateChannelPresences(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
+        private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
         {
             if (channelId == null || presences == null) return;
 
@@ -180,19 +192,96 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 case UserPresenceAction.Append:
                     foreach (var presence in presences)
                     {
-                        Debug.LogWarning($"Add {prc.TryAdd(presence.UserId, presence)}");
+                        prc.TryAdd(presence.UserId, presence);
                     }
                     break;
                 
                 case UserPresenceAction.Remove:
                     foreach (var presence in presences)
                     {
-                        Debug.LogWarning($"Remove {prc.Remove(presence.UserId)}");
+                        prc.Remove(presence.UserId);
                     }
                     break;
                 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(userPresenceAction), userPresenceAction, null);
+            }
+
+            await UpdatePresenceUsers(userPresenceAction, prc.Values);
+        }
+
+        private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, IEnumerable<IUserPresence> presences)
+        {
+            if (presences == null) return;
+
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
+
+            switch (userPresenceAction)
+            {
+                case UserPresenceAction.Append:
+                    var userIds = presences.Where(presence => !_allUsers.ContainsKey(presence.UserId)).Select(presence => presence.UserId).Distinct().ToList();
+                    foreach (var chunk in ChunkBy(userIds, MaxUsersPerRequest))
+                    {
+                        try
+                        {
+                            var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
+                            foreach (var user in users.Users)
+                            {
+                                _allUsers[user.Id] = user;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
+                        }
+                    }
+                    break;
+
+                case UserPresenceAction.Remove:
+                    foreach (var presence in presences)
+                    {
+                        var isUserInAnyChannel = _channelPresences.Values.Any(prc => prc.ContainsKey(presence.UserId));
+                        if (!isUserInAnyChannel)
+                        {
+                            _allUsers.Remove(presence.UserId);
+                        }
+                    }
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(userPresenceAction), userPresenceAction, null);
+            }
+        }
+        
+        private async Task UpdateHistoryUsers(IEnumerable<string> userIds)
+        {
+            var missingIds = userIds.Where(id => !_allUsers.ContainsKey(id)).Distinct().ToList();
+            if (missingIds.Count == 0) return;
+
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
+
+            foreach (var chunk in ChunkBy(missingIds, MaxUsersPerRequest))
+            {
+                try
+                {
+                    var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
+                    foreach (var user in users.Users)
+                    {
+                        _allUsers[user.Id] = user;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
+                }
+            }
+        }
+
+        private static IEnumerable<List<T>> ChunkBy<T>(List<T> source, int chunkSize)
+        {
+            for (var i = 0; i < source.Count; i += chunkSize)
+            {
+                yield return source.GetRange(i, Math.Min(chunkSize, source.Count - i));
             }
         }
         
@@ -204,10 +293,4 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             Disconnected();
         }
     }
-}
-
-public enum UserPresenceAction
-{
-    Append,
-    Remove
 }

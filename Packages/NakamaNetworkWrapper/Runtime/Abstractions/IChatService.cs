@@ -31,6 +31,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         Task UpdateMessageAsync(string channelId, string messageId, string content);
         
         Task RemoveMessageAsync(string channelId, string messageId);
+        
+        IApiUser GetUser(string userId);
     }
 }
 
