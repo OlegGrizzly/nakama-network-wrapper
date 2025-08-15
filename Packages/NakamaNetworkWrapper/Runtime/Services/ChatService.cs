@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
+using UnityEngine;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
@@ -12,9 +13,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly IClientService _clientService;
         private readonly IAuthService _authService;
         private readonly Dictionary<string, IChannel> _channels = new();
-        private readonly Dictionary<string, Dictionary<string, IUserPresence>> _participantsByChannel = new();
-        private readonly Dictionary<string, IApiUser> _userCache = new();
-        private readonly SemaphoreSlim _lookupGate = new(1,1);
+        private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
 
         public ChatService(IClientService clientService, IAuthService authService)
         {
@@ -100,9 +99,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void RegisterChannel(IChannel channel)
         {
+            Debug.LogWarning("RegisterChannel");
+            
             if (channel == null) return;
             
             _channels[channel.Id] = channel;
+            UpdateChannelPresences(UserPresenceAction.Append, channel.Id, channel.Presences);
             
             OnJoinedChannel?.Invoke(channel);
         }
@@ -113,10 +115,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             if (_channels.Remove(channelId, out var channel))
             {
+                _channelPresences.Remove(channel.Id);
+                
                 OnLeavedChannel?.Invoke(channel);
             }
-
-            _participantsByChannel.Remove(channelId);
         }
 
         private void Connected()
@@ -128,8 +130,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             DetachSocket();
             _channels.Clear();
-            _participantsByChannel.Clear();
-            _userCache.Clear();
         }
 
         private void AttachSocket()
@@ -156,109 +156,44 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             OnMessageReceived?.Invoke(msg);
         }
-
-        private void ReceivedChannelPresence(IChannelPresenceEvent e)
+        
+        private void ReceivedChannelPresence(IChannelPresenceEvent channelPresenceEvent)
         {
-            if (!_channels.ContainsKey(e.ChannelId)) return;
-            if (!_participantsByChannel.TryGetValue(e.ChannelId, out var dict))
-            {
-                dict = new Dictionary<string, IUserPresence>();
-                _participantsByChannel[e.ChannelId] = dict;
-            }
+            UpdateChannelPresences(UserPresenceAction.Append, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Joins);
+            UpdateChannelPresences(UserPresenceAction.Remove, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Leaves);
             
-            foreach (var p in e.Joins)
-            {
-                dict[p.UserId] = p;
-            }
-            
-            foreach (var p in e.Leaves)
-            {
-                if (dict.ContainsKey(p.UserId)) dict.Remove(p.UserId);
-            }
-
-            OnPresenceChanged?.Invoke(e);
+            OnPresenceChanged?.Invoke(channelPresenceEvent);
         }
-
-        public IReadOnlyCollection<IUserPresence> GetParticipants(string channelId)
+        
+        private void UpdateChannelPresences(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
         {
-            if (string.IsNullOrWhiteSpace(channelId)) return Array.Empty<IUserPresence>();
-            if (_participantsByChannel.TryGetValue(channelId, out var dict))
+            if (channelId == null || presences == null) return;
+
+            if (!_channelPresences.TryGetValue(channelId, out var prc))
             {
-                var arr = new IUserPresence[dict.Count];
-                dict.Values.CopyTo(arr, 0);
-                
-                return arr;
+                prc = new Dictionary<string, IUserPresence>();
+                _channelPresences[channelId] = prc;
             }
 
-            if (_channels.TryGetValue(channelId, out var ch))
+            switch (userPresenceAction)
             {
-                var seeded = new Dictionary<string, IUserPresence>();
-                
-                if (ch.Self != null) seeded[ch.Self.UserId] = ch.Self;
-                if (ch.Presences != null)
-                {
-                    foreach (var p in ch.Presences) seeded[p.UserId] = p;
-                }
-                
-                _participantsByChannel[channelId] = seeded;
-                
-                var arr = new IUserPresence[seeded.Count];
-                seeded.Values.CopyTo(arr, 0);
-                
-                return arr;
-            }
-
-            return Array.Empty<IUserPresence>();
-        }
-
-        public async Task PrefetchUsersAsync(string channelId, CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(channelId)) return;
-            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
-            
-            var participants = GetParticipants(channelId);
-            if (participants.Count == 0) return;
-            if (!_participantsByChannel.TryGetValue(channelId, out var dict)) return;
-
-            var toFetch = new List<string>();
-            foreach (var userId in dict.Keys)
-            {
-                if (_userCache.ContainsKey(userId)) continue;
-                toFetch.Add(userId);
-            }
-
-            if (toFetch.Count == 0) return;
-
-            await _lookupGate.WaitAsync(ct);
-            try
-            {
-                var batch = new List<string>();
-                foreach (var userId in toFetch)
-                {
-                    if (_userCache.ContainsKey(userId)) continue;
-                    batch.Add(userId);
-                }
-
-                if (batch.Count == 0) return;
-
-                var users = await _clientService.Client.GetUsersAsync(session, batch, canceller: ct);
-                if (users?.Users != null)
-                {
-                    foreach (var u in users.Users)
+                case UserPresenceAction.Append:
+                    foreach (var presence in presences)
                     {
-                        _userCache[u.Id] = u;
+                        Debug.LogWarning($"Add {prc.TryAdd(presence.UserId, presence)}");
                     }
-                }
+                    break;
+                
+                case UserPresenceAction.Remove:
+                    foreach (var presence in presences)
+                    {
+                        Debug.LogWarning($"Remove {prc.Remove(presence.UserId)}");
+                    }
+                    break;
+                
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(userPresenceAction), userPresenceAction, null);
             }
-            finally
-            {
-                _lookupGate.Release();
-            }
-        }
-
-        public IApiUser GetUser(string userId)
-        {
-            return string.IsNullOrEmpty(userId) ? null : _userCache.GetValueOrDefault(userId);
         }
         
         public void Dispose()
@@ -269,4 +204,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             Disconnected();
         }
     }
+}
+
+public enum UserPresenceAction
+{
+    Append,
+    Remove
 }

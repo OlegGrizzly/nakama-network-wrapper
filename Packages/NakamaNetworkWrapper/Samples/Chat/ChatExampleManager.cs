@@ -67,7 +67,6 @@ namespace Samples.Chat
 			listPrevButton.onClick.AddListener(OnListPrevClicked);
 			updateMsgButton.onClick.AddListener(OnUpdateMessageClicked);
 			removeMsgButton.onClick.AddListener(OnRemoveMessageClicked);
-			listParticipantsButton.onClick.AddListener(OnListParticipantsClicked);
 		}
 
 		private async void Start()
@@ -85,7 +84,7 @@ namespace Samples.Chat
 			_authService = new AuthService(_clientService, tokenPersistence);
 			_chatService = new ChatService(_clientService, _authService);
 			_chatService.OnMessageReceived += OnMessageReceived;
-			_chatService.OnPresenceChanged += OnPresenceChanged;
+			//_chatService.OnPresenceChanged += OnPresenceChanged;
 
 			_stateMachine = new ConnectionStateMachine(_authService, _clientService);
 			_stateMachine.OnStateChanged += UpdateUiByState;
@@ -122,12 +121,6 @@ namespace Samples.Chat
 				var channel = await _chatService.JoinChannelAsync(ChannelType.Room, name);
 				SetCurrentChannel(channel.Id);
 				Log($"Joined room: {name} ({channel.Id})", Color.green);
-				await _chatService.PrefetchUsersAsync(channel.Id);
-				Log($"[presence] self: {FormatUserName(channel.Self.UserId, channel.Self.Username)}", Color.yellow);
-				foreach (var p in _chatService.GetParticipants(channel.Id))
-				{
-					Log($"[presence] join: {FormatUserName(p.UserId, p.Username)}", Color.yellow);
-				}
 			}
 			catch (Exception ex)
 			{
@@ -142,13 +135,6 @@ namespace Samples.Chat
 				var gid = groupIdInput != null ? groupIdInput.text : string.Empty;
 				var channel = await _chatService.JoinChannelAsync(ChannelType.Group, gid);
 				SetCurrentChannel(channel.Id);
-				Log($"Joined group: {gid} ({channel.Id})", Color.green);
-				await _chatService.PrefetchUsersAsync(channel.Id);
-				Log($"[presence] self: {FormatUserName(channel.Self.UserId, channel.Self.Username)}", Color.yellow);
-				foreach (var p in _chatService.GetParticipants(channel.Id))
-				{
-					Log($"[presence] join: {FormatUserName(p.UserId, p.Username)}", Color.yellow);
-				}
 			}
 			catch (Exception ex)
 			{
@@ -164,12 +150,6 @@ namespace Samples.Chat
 				var channel = await _chatService.JoinChannelAsync(ChannelType.DirectMessage, uid);
 				SetCurrentChannel(channel.Id);
 				Log($"Joined direct with: {uid} ({channel.Id})", Color.green);
-				await _chatService.PrefetchUsersAsync(channel.Id);
-				Log($"[presence] self: {FormatUserName(channel.Self.UserId, channel.Self.Username)}", Color.yellow);
-				foreach (var p in _chatService.GetParticipants(channel.Id))
-				{
-					Log($"[presence] join: {FormatUserName(p.UserId, p.Username)}", Color.yellow);
-				}
 			}
 			catch (Exception ex)
 			{
@@ -298,29 +278,10 @@ namespace Samples.Chat
 
 		private void OnMessageReceived(IApiChannelMessage msg)
 		{
-			var name = FormatUserName(msg.SenderId, msg.Username);
+			var name = msg.Username;
 			Log($"[{msg.CreateTime}] {name}: {msg.Content} (id: {msg.MessageId})", Color.white);
 		}
-
-		private void OnPresenceChanged(IChannelPresenceEvent e)
-		{
-			if (!string.IsNullOrEmpty(_currentChannelId) && e.ChannelId != _currentChannelId) return;
-			_ = HandlePresenceAsync(e);
-		}
-
-		private async System.Threading.Tasks.Task HandlePresenceAsync(IChannelPresenceEvent e)
-		{
-			await _chatService.PrefetchUsersAsync(e.ChannelId);
-			foreach (var j in e.Joins)
-			{
-				Log($"[presence] join: {FormatUserName(j.UserId, j.Username)}", Color.yellow);
-			}
-			foreach (var l in e.Leaves)
-			{
-				Log($"[presence] leave: {FormatUserName(l.UserId, l.Username)}", Color.yellow);
-			}
-		}
-
+		
 		private void PrintPage(IApiChannelMessageList page)
 		{
 			_prevCursor = page.PrevCursor;
@@ -328,7 +289,7 @@ namespace Samples.Chat
 			var sequence = _forward ? page.Messages : page.Messages.Reverse();
 			foreach (var m in sequence)
 			{
-				var name = FormatUserName(m.SenderId, m.Username);
+				var name = m.Username;
 				Log($"[{m.CreateTime}] {name}: {m.Content} (id: {m.MessageId})", Color.grey);
 			}
 		}
@@ -369,36 +330,10 @@ namespace Samples.Chat
 			if (_chatService != null)
 			{
 				_chatService.OnMessageReceived -= OnMessageReceived;
-				_chatService.OnPresenceChanged -= OnPresenceChanged;
+				//_chatService.OnPresenceChanged -= OnPresenceChanged;
 				_chatService.Dispose();
 			}
 			_stateMachine?.Dispose();
-		}
-
-		private void OnListParticipantsClicked()
-		{
-			if (string.IsNullOrWhiteSpace(_currentChannelId))
-			{
-				Log("No active channel", Color.red);
-				return;
-			}
-			var participants = _chatService.GetParticipants(_currentChannelId);
-			Log($"Participants ({participants.Count}) in {_currentChannelId}:", Color.cyan);
-			foreach (var p in participants)
-			{
-				Log($" - {FormatUserName(p.UserId, p.Username)}", Color.cyan);
-			}
-		}
-
-		private string FormatUserName(string userId, string usernameFallback)
-		{
-			var u = _chatService.GetUser(userId);
-			if (u != null)
-			{
-				if (!string.IsNullOrEmpty(u.DisplayName)) return u.DisplayName;
-				if (!string.IsNullOrEmpty(u.Username)) return u.Username;
-			}
-			return string.IsNullOrEmpty(usernameFallback) ? userId : usernameFallback;
 		}
 
 		private static string MakeJsonContent(string text)
