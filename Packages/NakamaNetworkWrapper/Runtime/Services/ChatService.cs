@@ -80,8 +80,20 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
             
             var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
-            var userIds = messageList.Messages.Select(m => m.SenderId).Distinct().ToList();
-            await UpdateHistoryUsers(userIds);
+            var userIdSet = new HashSet<string>();
+            
+            foreach (var m in messageList.Messages)
+            {
+                if (!string.IsNullOrEmpty(m.SenderId))
+                {
+                    userIdSet.Add(m.SenderId);
+                }
+            }
+            
+            if (userIdSet.Count > 0)
+            {
+                await UpdateHistoryUsers(userIdSet);
+            }
             
             return messageList;
         }
@@ -141,7 +153,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private void Disconnected()
         {
             DetachSocket();
+            
             _channels.Clear();
+            _channelPresences.Clear();
+            _allUsers.Clear();
         }
 
         private void AttachSocket()
@@ -219,20 +234,31 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             switch (userPresenceAction)
             {
                 case UserPresenceAction.Append:
-                    var userIds = presences.Where(presence => !_allUsers.ContainsKey(presence.UserId)).Select(presence => presence.UserId).Distinct().ToList();
-                    foreach (var chunk in ChunkBy(userIds, MaxUsersPerRequest))
+                    var userIds = new HashSet<string>();
+                    foreach (var presence in presences)
                     {
-                        try
+                        if (!_allUsers.ContainsKey(presence.UserId))
                         {
-                            var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
-                            foreach (var user in users.Users)
-                            {
-                                _allUsers[user.Id] = user;
-                            }
+                            userIds.Add(presence.UserId);
                         }
-                        catch (Exception ex)
+                    }
+                    if (userIds.Count > 0)
+                    {
+                        var newUserIds = new List<string>(userIds);
+                        foreach (var chunk in ChunkBy(newUserIds, MaxUsersPerRequest))
                         {
-                            Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
+                            try
+                            {
+                                var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
+                                foreach (var user in users.Users)
+                                {
+                                    _allUsers[user.Id] = user;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
+                            }
                         }
                     }
                     break;
