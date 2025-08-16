@@ -1,15 +1,13 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Nakama;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
 {
     public interface IUserCacheService
     {
-        void AddUser(IApiUser user);
+        Task<IApiUser> GetUserAsync(string userId);
         
-        void RemoveUser(string userId);
-        
-        IApiUser GetUser(string userId);
-        
-        bool ContainsUser(string userId);
+        Task CollectUserIdsAsync(HashSet<string> ids);
     }
 }

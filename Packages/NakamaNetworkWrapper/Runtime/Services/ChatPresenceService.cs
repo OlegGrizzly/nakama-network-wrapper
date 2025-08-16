@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 
@@ -7,12 +8,18 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
     public class ChatPresenceService : IChatPresenceService, IDisposable
     {
+        private readonly IUserCacheService _userCacheService;
         private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
         private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new Dictionary<string, IUserPresence>();
+
+        public ChatPresenceService(IUserCacheService userCacheService = null)
+        {
+            _userCacheService = userCacheService;
+        }
         
         public event Action<IChannelPresenceEvent> OnPresenceChanged;
-
-        public void AddChannelPresences(IChannel channel)
+        
+        public async Task AddChannelPresencesAsync(IChannel channel)
         {
             if (!_channelPresences.ContainsKey(channel.Id))
             {
@@ -23,6 +30,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _channelPresences[channel.Id][presence.UserId] = presence;
             }
+
+            await CollectUserIdsForPresence(channel.Presences);
         }
 
         public void RemoveChannelPresences(IChannel channel)
@@ -30,7 +39,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _channelPresences.Remove(channel.Id);
         }
 
-        public void PresenceChanged(IChannelPresenceEvent presenceEvent)
+        public async void PresenceChanged(IChannelPresenceEvent presenceEvent)
         {
             if (!_channelPresences.ContainsKey(presenceEvent.ChannelId))
             {
@@ -47,6 +56,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _channelPresences[presenceEvent.ChannelId].Remove(presence.UserId);
             }
 
+            await CollectUserIdsForPresence(presenceEvent.Joins);
+
             OnPresenceChanged?.Invoke(presenceEvent);
         }
 
@@ -55,6 +66,26 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             return _channelPresences.TryGetValue(channelId, out var presences) ? presences : EmptyPresences;
         }
 
+        private async Task CollectUserIdsForPresence(IEnumerable<IUserPresence> presences)
+        {
+            if (_userCacheService == null) return;
+            
+            var userIdSet = new HashSet<string>();
+
+            foreach (var presence in presences)
+            {
+                if (!string.IsNullOrEmpty(presence.UserId))
+                {
+                    userIdSet.Add(presence.UserId);
+                }
+            }
+
+            if (userIdSet.Count > 0)
+            {
+                await _userCacheService.CollectUserIdsAsync(userIdSet);
+            }
+        }
+        
         public void Dispose()
         {
             _channelPresences.Clear();

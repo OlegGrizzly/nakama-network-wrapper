@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Nakama;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
@@ -8,7 +9,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
     {
         event Action<IChannelPresenceEvent> OnPresenceChanged;
         
-        void AddChannelPresences(IChannel channel);
+        Task AddChannelPresencesAsync(IChannel channel);
         
         void RemoveChannelPresences(IChannel channel);
 

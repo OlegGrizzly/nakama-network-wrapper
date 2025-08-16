@@ -45,7 +45,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var channel = await socket.JoinChatAsync(channelId, channelType, persistence, hidden);
             
             RegisterChannel(channel);
-            _chatPresenceService?.AddChannelPresences(channel);
+            
+            if (_chatPresenceService != null)
+            {
+                await _chatPresenceService.AddChannelPresencesAsync(channel);
+            }
             
             return channel;
         }
@@ -109,20 +113,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
             
             var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
-            /*var userIdSet = new HashSet<string>();
-            
-            foreach (var m in messageList.Messages)
-            {
-                if (!string.IsNullOrEmpty(m.SenderId))
-                {
-                    userIdSet.Add(m.SenderId);
-                }
-            }
-            
-            if (userIdSet.Count > 0)
-            {
-                await UpdateHistoryUsers(userIdSet);
-            }*/
+
+            await CollectUserIdsForMessages(messageList);
             
             return messageList;
         }
@@ -190,154 +182,25 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _chatPresenceService?.PresenceChanged(presenceEvent);
         }
         
-        /*private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
+        private async Task CollectUserIdsForMessages(IApiChannelMessageList messageList)
         {
-            if (channelId == null || presences == null) return;
+            if (_userCacheService == null) return;
+            
+            var userIdSet = new HashSet<string>();
 
-            if (!_channelPresences.TryGetValue(channelId, out var prc))
+            foreach (var m in messageList.Messages)
             {
-                prc = new Dictionary<string, IUserPresence>();
-                _channelPresences[channelId] = prc;
-            }
-
-            switch (userPresenceAction)
-            {
-                case UserPresenceAction.Append:
-                    foreach (var presence in presences)
-                    {
-                        prc.TryAdd(presence.UserId, presence);
-                    }
-                    break;
-                
-                case UserPresenceAction.Remove:
-                    foreach (var presence in presences)
-                    {
-                        prc.Remove(presence.UserId);
-                    }
-                    break;
-                
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(userPresenceAction), userPresenceAction, null);
-            }
-
-            await UpdatePresenceUsers(userPresenceAction, prc.Values);
-        }
-
-        private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, IEnumerable<IUserPresence> presences)
-        {
-            if (presences == null) return;
-
-            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
-
-            switch (userPresenceAction)
-            {
-                case UserPresenceAction.Append:
-                    var toFetch = new HashSet<string>();
-                    foreach (var presence in presences)
-                    {
-                        var id = presence.UserId;
-                        if (_userCacheService != null && !_userCacheService.ContainsUser(id) && !_pendingUsers.Contains(id))
-                        {
-                            toFetch.Add(id);
-                        }
-                    }
-                    if (toFetch.Count > 0)
-                    {
-                        foreach (var id in toFetch) _pendingUsers.Add(id);
-                        try
-                        {
-                            var batched = new List<string>(toFetch);
-                            foreach (var chunk in ChunkBy(batched, MaxUsersPerRequest))
-                            {
-                                try
-                                {
-                                    var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
-                                    foreach (var user in users.Users)
-                                    {
-                                        _userCacheService?.AddUser(user);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            foreach (var id in toFetch) _pendingUsers.Remove(id);
-                        }
-                    }
-                    break;
-
-                case UserPresenceAction.Remove:
-                    foreach (var presence in presences)
-                    {
-                        var isUserInAnyChannel = _channelPresences.Values.Any(prc => prc.ContainsKey(presence.UserId));
-                        if (!isUserInAnyChannel)
-                        {
-                            _userCacheService?.RemoveUser(presence.UserId);
-                        }
-                    }
-                    break;
-
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(userPresenceAction), userPresenceAction, null);
-            }
-        }
-        
-        private async Task UpdateHistoryUsers(IEnumerable<string> userIds)
-        {
-            var toFetch = new HashSet<string>();
-            foreach (var id in userIds)
-            {
-                if (!_allUsers.ContainsKey(id) && !_pendingUsers.Contains(id))
+                if (!string.IsNullOrEmpty(m.SenderId))
                 {
-                    toFetch.Add(id);
+                    userIdSet.Add(m.SenderId);
                 }
             }
-            
-            if (toFetch.Count == 0) return;
-            
-            foreach (var id in toFetch)
-            {
-                _pendingUsers.Add(id);
-            }
 
-            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
-
-            try
+            if (userIdSet.Count > 0)
             {
-                var listToFetch = new List<string>(toFetch);
-                foreach (var chunk in ChunkBy(listToFetch, MaxUsersPerRequest))
-                {
-                    try
-                    {
-                        var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
-                        foreach (var user in users.Users)
-                        {
-                            _allUsers[user.Id] = user;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
-                    }
-                }
-            }
-            finally
-            {
-                foreach (var id in toFetch) _pendingUsers.Remove(id);
+                await _userCacheService.CollectUserIdsAsync(userIdSet);
             }
         }
-
-        private static IEnumerable<List<T>> ChunkBy<T>(List<T> source, int chunkSize)
-        {
-            for (var i = 0; i < source.Count; i += chunkSize)
-            {
-                yield return source.GetRange(i, Math.Min(chunkSize, source.Count - i));
-            }
-        }*/
         
         public void Dispose()
         {

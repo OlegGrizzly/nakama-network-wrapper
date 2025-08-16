@@ -45,6 +45,7 @@ namespace Samples.Chat
 		private IDeviceIdProvider _deviceIdProvider;
 		private IAuthService _authService;
 		private IChatPresenceService _chatPresenceService;
+		private IUserCacheService _userCacheService;
 		private IChatService _chatService;
 		private ConnectionStateMachine _stateMachine;
 
@@ -84,8 +85,9 @@ namespace Samples.Chat
 			var tokenPersistence = new PlayerPrefsTokenPersistence();
 			_authService = new AuthService(_clientService, tokenPersistence);
 
-			_chatPresenceService = new ChatPresenceService();
-			_chatService = new ChatService(_clientService, _authService, chatPresenceService: _chatPresenceService);
+			_userCacheService = new UserCacheService(_clientService, _authService);
+			_chatPresenceService = new ChatPresenceService(_userCacheService);
+			_chatService = new ChatService(_clientService, _authService, _userCacheService, _chatPresenceService);
 			_chatService.OnMessageReceived += OnMessageReceived;
 
 			_stateMachine = new ConnectionStateMachine(_authService, _clientService);
@@ -120,10 +122,10 @@ namespace Samples.Chat
 		{
 			try
 			{
-				var name = roomNameInput != null ? roomNameInput.text : "lobby";
-				var channel = await _chatService.JoinChannelAsync(ChannelType.Room, name);
+				var roomName = roomNameInput != null ? roomNameInput.text : "lobby";
+				var channel = await _chatService.JoinChannelAsync(ChannelType.Room, roomName);
 				SetCurrentChannel(channel.Id);
-				Log($"Joined room: {name} ({channel.Id})", Color.green);
+				Log($"Joined room: {roomName} ({channel.Id})", Color.green);
 			}
 			catch (Exception ex)
 			{
@@ -208,6 +210,7 @@ namespace Samples.Chat
 					return;
 				}
 				_forward = false; // list newest->oldest from server, then reverse for UI oldest->newest
+				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, forward: _forward);
 				PrintPage(page);
 			}
@@ -223,6 +226,7 @@ namespace Samples.Chat
 			{
 				// Next → показать следующую страницу по времени UI (т.е. более старые при _forward=false)
 				if (string.IsNullOrWhiteSpace(_currentChannelId) || string.IsNullOrWhiteSpace(_prevCursor)) return;
+				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, _prevCursor, _forward);
 				PrintPage(page);
 			}
@@ -238,6 +242,7 @@ namespace Samples.Chat
 			{
 				// Prev → показать предыдущую страницу по времени UI (т.е. более новые при _forward=false)
 				if (string.IsNullOrWhiteSpace(_currentChannelId) || string.IsNullOrWhiteSpace(_nextCursor)) return;
+				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, _nextCursor, _forward);
 				PrintPage(page);
 			}
@@ -279,19 +284,23 @@ namespace Samples.Chat
 			}
 		}
 
-		private void OnMessageReceived(IApiChannelMessage msg)
+		private async void OnMessageReceived(IApiChannelMessage msg)
 		{
-			Log($"[{msg.CreateTime}] {msg.Username}: {msg.Content} (id: {msg.MessageId})", Color.white);
+			var user = await _userCacheService.GetUserAsync(msg.SenderId);
+			var displayName = user?.DisplayName ?? msg.Username;
+			Log($"[{msg.CreateTime}] {displayName}: {msg.Content} (id: {msg.MessageId})", Color.white);
 		}
 		
-		private void PrintPage(IApiChannelMessageList page)
+		private async void PrintPage(IApiChannelMessageList page)
 		{
 			_prevCursor = page.PrevCursor;
 			_nextCursor = page.NextCursor;
 			var sequence = _forward ? page.Messages : page.Messages.Reverse();
 			foreach (var m in sequence)
 			{
-				Log($"[{m.CreateTime}] {m.Username}: {m.Content} (id: {m.MessageId})", Color.grey);
+				var user = await _userCacheService.GetUserAsync(m.SenderId);
+				var displayName = user?.DisplayName ?? m.Username;
+				Log($"[{m.CreateTime}] {displayName}: {m.Content} (id: {m.MessageId})", Color.grey);
 			}
 		}
 
@@ -351,7 +360,7 @@ namespace Samples.Chat
 			return $"{{\"text\":\"{escaped}\"}}";
 		}
 
-		private void OnPresenceChanged(IChannelPresenceEvent presenceEvent)
+		private async void OnPresenceChanged(IChannelPresenceEvent presenceEvent)
 		{
 			var channelId = presenceEvent.ChannelId;
 			var presences = _chatPresenceService.GetPresences(channelId);
@@ -359,12 +368,16 @@ namespace Samples.Chat
 
 			foreach (var join in presenceEvent.Joins)
 			{
-				Debug.Log($"User {join.UserId} joined channel {channelId}");
+				var user = await _userCacheService.GetUserAsync(join.UserId);
+				var displayName = user?.DisplayName ?? join.Username;
+				Debug.Log($"User {displayName} joined channel {channelId}");
 			}
 
 			foreach (var leave in presenceEvent.Leaves)
 			{
-				Debug.Log($"User {leave.UserId} left channel {channelId}");
+				var user = await _userCacheService.GetUserAsync(leave.UserId);
+				var displayName = user?.DisplayName ?? leave.Username;
+				Debug.Log($"User {displayName} left channel {channelId}");
 			}
 
 			Debug.Log($"Channel {channelId} presence changed. Current count: {count}");
