@@ -1,12 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using UnityEngine;
-using System.Linq;
-using OlegGrizzly.NakamaNetworkWrapper.Common;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
@@ -14,28 +13,27 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
     {
         private readonly IClientService _clientService;
         private readonly IAuthService _authService;
+        private readonly IUserCacheService _userCacheService;
+        private readonly IChatPresenceService _chatPresenceService;
         private readonly Dictionary<string, IChannel> _channels = new();
-        private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
-        private readonly Dictionary<string, IApiUser> _allUsers = new();
-        private readonly HashSet<string> _pendingUsers = new();
-        
-        private const int MaxUsersPerRequest = 100;
 
-        public ChatService(IClientService clientService, IAuthService authService)
+        public ChatService(IClientService clientService, IAuthService authService, IUserCacheService userCacheService = null, IChatPresenceService chatPresenceService = null)
         {
             _clientService = clientService ?? throw new ArgumentNullException(nameof(clientService));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+            
+            _userCacheService = userCacheService;
+            _chatPresenceService = chatPresenceService;
 
             _clientService.OnConnected += Connected;
             _clientService.OnDisconnected += Disconnected;
         }
 
         public event Action<IChannel> OnJoinedChannel;
-        public event Action<IChannel> OnLeavedChannel;
+        public event Action<IChannel> OnLeftChannel;
         public event Action<IApiChannelMessage> OnMessageReceived;
-        public event Action<IChannelPresenceEvent> OnPresenceChanged;
 
-        public IReadOnlyDictionary<string, IChannel> JoinedChannels => _channels;
+        public IReadOnlyDictionary<string, IChannel> JoinedChannels => new ReadOnlyDictionary<string, IChannel>(new Dictionary<string, IChannel>(_channels));
 
         public IChannel GetChannel(string channelId) => channelId != null && _channels.TryGetValue(channelId, out var ch) ? ch : null;
 
@@ -47,22 +45,32 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var channel = await socket.JoinChatAsync(channelId, channelType, persistence, hidden);
             
             RegisterChannel(channel);
+            _chatPresenceService?.AddChannelPresences(channel);
             
             return channel;
         }
-
+        
         public async Task LeaveChannelAsync(string channelId)
         {
             if (string.IsNullOrWhiteSpace(channelId)) return;
             if (!_channels.TryGetValue(channelId, out var channel)) return;
-            
+
             var socket = _clientService.Socket;
-            if (socket != null)
+            try
             {
-                await socket.LeaveChatAsync(channel);
+                if (socket != null)
+                {
+                    await socket.LeaveChatAsync(channel);
+                }
+                
+                UnregisterChannel(channelId);
+                _chatPresenceService?.RemoveChannelPresences(channel);
             }
-            
-            UnregisterChannel(channelId);
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ChatService] Error while leaving channel '{channelId}': {ex}");
+                throw;
+            }
         }
 
         public async Task SendMessageAsync(string channelId, string content)
@@ -73,32 +81,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             await socket.WriteChatMessageAsync(channelId, content);
         }
-
-        public async Task<IApiChannelMessageList> ListMessagesAsync(string channelId, int limit = 50, string cursor = null, bool forward = true, CancellationToken ct = default)
-        {
-            if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
-
-            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
-            
-            var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
-            var userIdSet = new HashSet<string>();
-            
-            foreach (var m in messageList.Messages)
-            {
-                if (!string.IsNullOrEmpty(m.SenderId))
-                {
-                    userIdSet.Add(m.SenderId);
-                }
-            }
-            
-            if (userIdSet.Count > 0)
-            {
-                await UpdateHistoryUsers(userIdSet);
-            }
-            
-            return messageList;
-        }
-
+        
         public async Task UpdateMessageAsync(string channelId, string messageId, string content)
         {
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
@@ -118,19 +101,38 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             await socket.RemoveChatMessageAsync(channelId, messageId);
         }
-        
-        public IApiUser GetUser(string userId)
+
+        public async Task<IApiChannelMessageList> ListMessagesAsync(string channelId, int limit = 50, string cursor = null, bool forward = true, CancellationToken ct = default)
         {
-            return _allUsers.GetValueOrDefault(userId);
+            if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
+
+            var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
+            
+            var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
+            /*var userIdSet = new HashSet<string>();
+            
+            foreach (var m in messageList.Messages)
+            {
+                if (!string.IsNullOrEmpty(m.SenderId))
+                {
+                    userIdSet.Add(m.SenderId);
+                }
+            }
+            
+            if (userIdSet.Count > 0)
+            {
+                await UpdateHistoryUsers(userIdSet);
+            }*/
+            
+            return messageList;
         }
 
-        private async void RegisterChannel(IChannel channel)
+        private void RegisterChannel(IChannel channel)
         {
             if (channel == null) return;
             
-            _channels[channel.Id] = channel;
-            await UpdatePresenceUsers(UserPresenceAction.Append, channel.Id, channel.Presences);
-            
+            if (!_channels.TryAdd(channel.Id, channel)) return;
+
             OnJoinedChannel?.Invoke(channel);
         }
 
@@ -140,9 +142,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             if (_channels.Remove(channelId, out var channel))
             {
-                _channelPresences.Remove(channel.Id);
-                
-                OnLeavedChannel?.Invoke(channel);
+                OnLeftChannel?.Invoke(channel);
             }
         }
 
@@ -156,15 +156,14 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             DetachSocket();
             
             _channels.Clear();
-            _channelPresences.Clear();
-            _allUsers.Clear();
-            _pendingUsers.Clear();
         }
 
         private void AttachSocket()
         {
             var socket = _clientService.Socket;
             if (socket == null) return;
+            
+            DetachSocket();
             
             socket.ReceivedChannelMessage += ReceivedChannelMessage;
             socket.ReceivedChannelPresence += ReceivedChannelPresence;
@@ -186,15 +185,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             OnMessageReceived?.Invoke(msg);
         }
         
-        private async void ReceivedChannelPresence(IChannelPresenceEvent channelPresenceEvent)
+        private void ReceivedChannelPresence(IChannelPresenceEvent presenceEvent)
         {
-            await UpdatePresenceUsers(UserPresenceAction.Append, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Joins);
-            await UpdatePresenceUsers(UserPresenceAction.Remove, channelPresenceEvent?.ChannelId, channelPresenceEvent?.Leaves);
-            
-            OnPresenceChanged?.Invoke(channelPresenceEvent);
+            _chatPresenceService?.PresenceChanged(presenceEvent);
         }
         
-        private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
+        /*private async Task UpdatePresenceUsers(UserPresenceAction userPresenceAction, string channelId, IEnumerable<IUserPresence> presences)
         {
             if (channelId == null || presences == null) return;
 
@@ -240,7 +236,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     foreach (var presence in presences)
                     {
                         var id = presence.UserId;
-                        if (!_allUsers.ContainsKey(id) && !_pendingUsers.Contains(id))
+                        if (_userCacheService != null && !_userCacheService.ContainsUser(id) && !_pendingUsers.Contains(id))
                         {
                             toFetch.Add(id);
                         }
@@ -258,7 +254,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                                     var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
                                     foreach (var user in users.Users)
                                     {
-                                        _allUsers[user.Id] = user;
+                                        _userCacheService?.AddUser(user);
                                     }
                                 }
                                 catch (Exception ex)
@@ -280,7 +276,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                         var isUserInAnyChannel = _channelPresences.Values.Any(prc => prc.ContainsKey(presence.UserId));
                         if (!isUserInAnyChannel)
                         {
-                            _allUsers.Remove(presence.UserId);
+                            _userCacheService?.RemoveUser(presence.UserId);
                         }
                     }
                     break;
@@ -341,7 +337,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 yield return source.GetRange(i, Math.Min(chunkSize, source.Count - i));
             }
-        }
+        }*/
         
         public void Dispose()
         {

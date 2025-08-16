@@ -10,11 +10,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
     {
         event Action<IChannel> OnJoinedChannel;
         
-        event Action<IChannel> OnLeavedChannel;
+        event Action<IChannel> OnLeftChannel;
         
         event Action<IApiChannelMessage> OnMessageReceived;
-        
-        event Action<IChannelPresenceEvent> OnPresenceChanged;
         
         IReadOnlyDictionary<string, IChannel> JoinedChannels { get; }
         
@@ -31,8 +29,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         Task UpdateMessageAsync(string channelId, string messageId, string content);
         
         Task RemoveMessageAsync(string channelId, string messageId);
-        
-        IApiUser GetUser(string userId);
     }
 }
 

@@ -44,6 +44,7 @@ namespace Samples.Chat
 		private IClientService _clientService;
 		private IDeviceIdProvider _deviceIdProvider;
 		private IAuthService _authService;
+		private IChatPresenceService _chatPresenceService;
 		private IChatService _chatService;
 		private ConnectionStateMachine _stateMachine;
 
@@ -82,9 +83,10 @@ namespace Samples.Chat
 
 			var tokenPersistence = new PlayerPrefsTokenPersistence();
 			_authService = new AuthService(_clientService, tokenPersistence);
-			_chatService = new ChatService(_clientService, _authService);
+
+			_chatPresenceService = new ChatPresenceService();
+			_chatService = new ChatService(_clientService, _authService, chatPresenceService: _chatPresenceService);
 			_chatService.OnMessageReceived += OnMessageReceived;
-			//_chatService.OnPresenceChanged += OnPresenceChanged;
 
 			_stateMachine = new ConnectionStateMachine(_authService, _clientService);
 			_stateMachine.OnStateChanged += UpdateUiByState;
@@ -99,8 +101,9 @@ namespace Samples.Chat
 			}
 
 			UpdateUiByState(_stateMachine.CurrentState);
+			_chatPresenceService.OnPresenceChanged += OnPresenceChanged;
 		}
-
+		
 		private async void OnConnectClicked()
 		{
 			var id = _deviceIdProvider.GetDeviceId();
@@ -278,9 +281,7 @@ namespace Samples.Chat
 
 		private void OnMessageReceived(IApiChannelMessage msg)
 		{
-			var user = _chatService.GetUser(msg.SenderId);
-			var name = user?.DisplayName ?? msg.Username;
-			Log($"[{msg.CreateTime}] {name}: {msg.Content} (id: {msg.MessageId})", Color.white);
+			Log($"[{msg.CreateTime}] {msg.Username}: {msg.Content} (id: {msg.MessageId})", Color.white);
 		}
 		
 		private void PrintPage(IApiChannelMessageList page)
@@ -290,9 +291,7 @@ namespace Samples.Chat
 			var sequence = _forward ? page.Messages : page.Messages.Reverse();
 			foreach (var m in sequence)
 			{
-				var user = _chatService.GetUser(m.SenderId);
-				var name = user?.DisplayName ?? m.Username;
-				Log($"[{m.CreateTime}] {name}: {m.Content} (id: {m.MessageId})", Color.grey);
+				Log($"[{m.CreateTime}] {m.Username}: {m.Content} (id: {m.MessageId})", Color.grey);
 			}
 		}
 
@@ -332,10 +331,13 @@ namespace Samples.Chat
 			if (_chatService != null)
 			{
 				_chatService.OnMessageReceived -= OnMessageReceived;
-				//_chatService.OnPresenceChanged -= OnPresenceChanged;
 				_chatService.Dispose();
 			}
 			_stateMachine?.Dispose();
+			if (_chatPresenceService != null)
+			{
+				_chatPresenceService.OnPresenceChanged -= OnPresenceChanged;
+			}
 		}
 
 		private static string MakeJsonContent(string text)
@@ -347,6 +349,25 @@ namespace Samples.Chat
 				.Replace("\n", "\\n")
 				.Replace("\r", "\\r");
 			return $"{{\"text\":\"{escaped}\"}}";
+		}
+
+		private void OnPresenceChanged(IChannelPresenceEvent presenceEvent)
+		{
+			var channelId = presenceEvent.ChannelId;
+			var presences = _chatPresenceService.GetPresences(channelId);
+			var count = presences.Count;
+
+			foreach (var join in presenceEvent.Joins)
+			{
+				Debug.Log($"User {join.UserId} joined channel {channelId}");
+			}
+
+			foreach (var leave in presenceEvent.Leaves)
+			{
+				Debug.Log($"User {leave.UserId} left channel {channelId}");
+			}
+
+			Debug.Log($"Channel {channelId} presence changed. Current count: {count}");
 		}
 	}
 }
