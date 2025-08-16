@@ -17,6 +17,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly Dictionary<string, IChannel> _channels = new();
         private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
         private readonly Dictionary<string, IApiUser> _allUsers = new();
+        private readonly HashSet<string> _pendingUsers = new();
         
         private const int MaxUsersPerRequest = 100;
 
@@ -157,6 +158,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _channels.Clear();
             _channelPresences.Clear();
             _allUsers.Clear();
+            _pendingUsers.Clear();
         }
 
         private void AttachSocket()
@@ -234,31 +236,40 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             switch (userPresenceAction)
             {
                 case UserPresenceAction.Append:
-                    var userIds = new HashSet<string>();
+                    var toFetch = new HashSet<string>();
                     foreach (var presence in presences)
                     {
-                        if (!_allUsers.ContainsKey(presence.UserId))
+                        var id = presence.UserId;
+                        if (!_allUsers.ContainsKey(id) && !_pendingUsers.Contains(id))
                         {
-                            userIds.Add(presence.UserId);
+                            toFetch.Add(id);
                         }
                     }
-                    if (userIds.Count > 0)
+                    if (toFetch.Count > 0)
                     {
-                        var newUserIds = new List<string>(userIds);
-                        foreach (var chunk in ChunkBy(newUserIds, MaxUsersPerRequest))
+                        foreach (var id in toFetch) _pendingUsers.Add(id);
+                        try
                         {
-                            try
+                            var batched = new List<string>(toFetch);
+                            foreach (var chunk in ChunkBy(batched, MaxUsersPerRequest))
                             {
-                                var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
-                                foreach (var user in users.Users)
+                                try
                                 {
-                                    _allUsers[user.Id] = user;
+                                    var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
+                                    foreach (var user in users.Users)
+                                    {
+                                        _allUsers[user.Id] = user;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
                                 }
                             }
-                            catch (Exception ex)
-                            {
-                                Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
-                            }
+                        }
+                        finally
+                        {
+                            foreach (var id in toFetch) _pendingUsers.Remove(id);
                         }
                     }
                     break;
@@ -281,25 +292,46 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private async Task UpdateHistoryUsers(IEnumerable<string> userIds)
         {
-            var missingIds = userIds.Where(id => !_allUsers.ContainsKey(id)).Distinct().ToList();
-            if (missingIds.Count == 0) return;
+            var toFetch = new HashSet<string>();
+            foreach (var id in userIds)
+            {
+                if (!_allUsers.ContainsKey(id) && !_pendingUsers.Contains(id))
+                {
+                    toFetch.Add(id);
+                }
+            }
+            
+            if (toFetch.Count == 0) return;
+            
+            foreach (var id in toFetch)
+            {
+                _pendingUsers.Add(id);
+            }
 
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
-            foreach (var chunk in ChunkBy(missingIds, MaxUsersPerRequest))
+            try
             {
-                try
+                var listToFetch = new List<string>(toFetch);
+                foreach (var chunk in ChunkBy(listToFetch, MaxUsersPerRequest))
                 {
-                    var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
-                    foreach (var user in users.Users)
+                    try
                     {
-                        _allUsers[user.Id] = user;
+                        var users = await _clientService.Client.GetUsersAsync(session, chunk.ToArray());
+                        foreach (var user in users.Users)
+                        {
+                            _allUsers[user.Id] = user;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[ChatService] Error fetching users: {ex.Message}");
-                }
+            }
+            finally
+            {
+                foreach (var id in toFetch) _pendingUsers.Remove(id);
             }
         }
 
