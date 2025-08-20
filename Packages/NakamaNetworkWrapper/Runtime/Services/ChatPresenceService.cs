@@ -11,13 +11,18 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly IUserCacheService _userCacheService;
         private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
         private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new Dictionary<string, IUserPresence>();
+        private readonly Dictionary<string, TaskCompletionSource<bool>> _channelReady = new();
 
         public ChatPresenceService(IUserCacheService userCacheService = null)
         {
             _userCacheService = userCacheService;
         }
         
+        public event Action<string> OnChannelReady;
+        
         public event Action<IChannelPresenceEvent> OnPresenceChanged;
+        
+        public bool IsChannelReady(string channelId) => _channelReady.TryGetValue(channelId, out var tcs) && tcs.Task.IsCompleted;
         
         public async Task AddChannelPresencesAsync(IChannel channel)
         {
@@ -32,10 +37,13 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
 
             await CollectUserIdsForPresence(channel.Presences);
+            
+            MarkChannelReady(channel.Id);
         }
 
         public void RemoveChannelPresences(IChannel channel)
         {
+            _channelReady.Remove(channel.Id);
             _channelPresences.Remove(channel.Id);
         }
 
@@ -85,11 +93,26 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 await _userCacheService.CollectUserIdsAsync(userIdSet);
             }
         }
+
+        private void MarkChannelReady(string channelId)
+        {
+            if (!_channelReady.TryGetValue(channelId, out var tcs))
+            {
+                tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _channelReady[channelId] = tcs;
+            }
+            tcs.TrySetResult(true);
+            
+            OnChannelReady?.Invoke(channelId);
+        }
         
         public void Dispose()
         {
+            _channelReady.Clear();
             _channelPresences.Clear();
+            
             OnPresenceChanged = null;
+            OnChannelReady = null;
         }
     }
 }
