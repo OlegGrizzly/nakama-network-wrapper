@@ -44,7 +44,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
             var channel = await socket.JoinChatAsync(channelId, channelType, persistence, hidden);
             
-            RegisterChannel(channel);
+            RegisterChannel(channelId, channel);
             
             if (_chatPresenceService != null)
             {
@@ -57,7 +57,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public async Task LeaveChannelAsync(string channelId)
         {
             if (string.IsNullOrWhiteSpace(channelId)) return;
-            if (!_channels.TryGetValue(channelId, out var channel)) return;
+            var channel = GetChannel(channelId);
+            if (channel == null) return;
 
             var socket = _clientService.Socket;
             try
@@ -81,9 +82,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
             
+            var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
             var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
-            
-            await socket.WriteChatMessageAsync(channelId, content);
+            await socket.WriteChatMessageAsync(channel.Id, content);
         }
         
         public async Task UpdateMessageAsync(string channelId, string messageId, string content)
@@ -91,9 +92,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
             if (string.IsNullOrWhiteSpace(messageId)) throw new ArgumentException("Message id required", nameof(messageId));
             
+            var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
             var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
-            
-            await socket.UpdateChatMessageAsync(channelId, messageId, content);
+            await socket.UpdateChatMessageAsync(channel.Id, messageId, content);
         }
 
         public async Task RemoveMessageAsync(string channelId, string messageId)
@@ -101,9 +102,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
             if (string.IsNullOrWhiteSpace(messageId)) throw new ArgumentException("Message id required", nameof(messageId));
             
+            var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
             var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
-            
-            await socket.RemoveChatMessageAsync(channelId, messageId);
+            await socket.RemoveChatMessageAsync(channel.Id, messageId);
         }
 
         public async Task<IApiChannelMessageList> ListMessagesAsync(string channelId, int limit = 50, string cursor = null, bool forward = true, CancellationToken ct = default)
@@ -112,18 +113,19 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
             
-            var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channelId, limit, forward, cursor, canceller: ct);
+            var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
+            var messageList = await _clientService.Client.ListChannelMessagesAsync(session, channel.Id, limit, forward, cursor, canceller: ct);
 
             await CollectUserIdsForMessages(messageList);
             
             return messageList;
         }
 
-        private void RegisterChannel(IChannel channel)
+        private void RegisterChannel(string key, IChannel channel)
         {
             if (channel == null) return;
             
-            if (!_channels.TryAdd(channel.Id, channel)) return;
+            if (!_channels.TryAdd(key, channel)) return;
 
             OnJoinedChannel?.Invoke(channel);
         }
@@ -172,7 +174,17 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void ReceivedChannelMessage(IApiChannelMessage msg)
         {
-            if (!_channels.ContainsKey(msg.ChannelId)) return;
+            var isJoined = false;
+            foreach (var ch in _channels.Values)
+            {
+                if (ch.Id == msg.ChannelId)
+                {
+                    isJoined = true;
+                    break;
+                }
+            }
+            
+            if (!isJoined) return;
             
             OnMessageReceived?.Invoke(msg);
         }

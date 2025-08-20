@@ -126,7 +126,7 @@ namespace Samples.Chat
 			{
 				var roomName = roomNameInput != null ? roomNameInput.text : "lobby";
 				var channel = await _chatService.JoinChannelAsync(ChannelType.Room, roomName);
-				SetCurrentChannel(channel.Id);
+				SetCurrentChannel(roomName);
 				Log($"Joined room: {roomName} ({channel.Id})", Color.green);
 			}
 			catch (Exception ex)
