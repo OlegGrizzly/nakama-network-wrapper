@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
@@ -104,6 +105,7 @@ namespace Samples.Chat
 
 			UpdateUiByState(_stateMachine.CurrentState);
 			_chatPresenceService.OnPresenceChanged += OnPresenceChanged;
+			_chatPresenceService.OnChannelReady += OnChannelReady;
 		}
 		
 		private async void OnConnectClicked()
@@ -346,6 +348,7 @@ namespace Samples.Chat
 			if (_chatPresenceService != null)
 			{
 				_chatPresenceService.OnPresenceChanged -= OnPresenceChanged;
+				_chatPresenceService.OnChannelReady -= OnChannelReady;
 			}
 		}
 
@@ -365,7 +368,7 @@ namespace Samples.Chat
 			var channelId = presenceEvent.ChannelId;
 			var presences = _chatPresenceService.GetPresences(channelId);
 			var count = presences.Count;
-
+			
 			foreach (var join in presenceEvent.Joins)
 			{
 				var user = await _userCacheService.GetUserAsync(join.UserId);
@@ -381,6 +384,29 @@ namespace Samples.Chat
 			}
 
 			Debug.Log($"Channel {channelId} presence changed. Current count: {count}");
+		}
+
+		private async void OnChannelReady(string channelId)
+		{
+			try
+			{
+				var presences = _chatPresenceService.GetPresences(channelId).Values;
+				var names = new List<string>();
+				
+				foreach (var presence in presences)
+				{
+					var user = await _userCacheService.GetUserAsync(presence.UserId);
+					var displayName = !string.IsNullOrWhiteSpace(user?.DisplayName) ? user.DisplayName : presence.Username;
+					
+					names.Add(displayName);
+				}
+				
+				Debug.Log($"Channel {channelId} participants: {string.Join(", ", names)}. Current count: {names.Count}");
+			}
+			catch (Exception ex)
+			{
+				Debug.LogError($"Failed to list participants for channel {channelId}: {ex.Message}");
+			}
 		}
 	}
 }
