@@ -46,9 +46,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     try
                     {
                         await RefreshSessionIfNeededAsync();
-                        
+
                         await _clientService.ConnectAsync(Session);
-                        
+
                         Account = await _clientService.Client.GetAccountAsync(Session, canceller: _clientService.ShutdownToken);
                         Authenticated(Session);
 
@@ -56,8 +56,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     }
                     catch (Exception ex)
                     {
-                        AuthenticationFailed(ex);
-                        throw;
+                        Debug.LogWarning($"Existing session path failed, falling back to fresh auth: {ex.Message}");
+                        
+                        _tokenPersistence?.Clear();
+                        Session = null;
                     }
                 }
                 
@@ -145,7 +147,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"Failed to restore session: {ex.Message}");
+                    
                     _tokenPersistence.Clear();
+                    Session = null;
                     
                     return false;
                 }
@@ -210,7 +214,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 case AuthType.Custom:
                     if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Custom id must be provided", nameof(id));
-                    return await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: _clientService.ShutdownToken);
+                    
+                    using (var cts = CancellationTokenSource.CreateLinkedTokenSource(_clientService.ShutdownToken))
+                    {
+                        cts.CancelAfter(TimeSpan.FromSeconds(10));
+                        return await _clientService.Client.AuthenticateCustomAsync(id, username, true, vars, canceller: cts.Token);
+                    }
                 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(type));
