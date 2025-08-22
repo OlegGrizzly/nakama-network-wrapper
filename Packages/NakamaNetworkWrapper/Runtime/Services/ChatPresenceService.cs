@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
@@ -10,8 +11,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
     {
         private readonly IUserCacheService _userCacheService;
         private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
-        private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new Dictionary<string, IUserPresence>();
+        private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new ReadOnlyDictionary<string, IUserPresence>(new Dictionary<string, IUserPresence>());
         private readonly Dictionary<string, TaskCompletionSource<bool>> _channelReady = new();
+        private readonly System.Threading.SemaphoreSlim _gate = new(1, 1);
 
         public ChatPresenceService(IUserCacheService userCacheService = null)
         {
@@ -26,52 +28,104 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public async Task AddChannelPresencesAsync(IChannel channel)
         {
-            if (!_channelPresences.ContainsKey(channel.Id))
-            {
-                _channelPresences[channel.Id] = new Dictionary<string, IUserPresence>();
-            }
-
-            foreach (var presence in channel.Presences)
-            {
-                _channelPresences[channel.Id][presence.UserId] = presence;
-            }
-
-            await CollectUserIdsForPresence(channel.Presences);
+            if (channel == null) throw new ArgumentNullException(nameof(channel));
             
+            var presencesSnapshot = new List<IUserPresence>(channel.Presences);
+
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!_channelPresences.ContainsKey(channel.Id))
+                {
+                    _channelPresences[channel.Id] = new Dictionary<string, IUserPresence>();
+                }
+
+                var map = _channelPresences[channel.Id];
+                foreach (var presence in presencesSnapshot)
+                {
+                    map[presence.UserId] = presence;
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+            
+            await CollectUserIdsForPresence(presencesSnapshot).ConfigureAwait(false);
+
             MarkChannelReady(channel.Id);
         }
 
         public void RemoveChannelPresences(IChannel channel)
         {
-            _channelReady.Remove(channel.Id);
-            _channelPresences.Remove(channel.Id);
+            if (channel == null) return;
+
+            _gate.Wait();
+            try
+            {
+                _channelReady.Remove(channel.Id);
+                _channelPresences.Remove(channel.Id);
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
 
         public async void PresenceChanged(IChannelPresenceEvent presenceEvent)
         {
-            if (!_channelPresences.ContainsKey(presenceEvent.ChannelId))
-            {
-                _channelPresences[presenceEvent.ChannelId] = new Dictionary<string, IUserPresence>();
-            }
+            if (presenceEvent == null) return;
+            
+            var joinsSnapshot = new List<IUserPresence>(presenceEvent.Joins);
+            var leavesSnapshot = new List<IUserPresence>(presenceEvent.Leaves);
 
-            foreach (var presence in presenceEvent.Joins)
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
             {
-                _channelPresences[presenceEvent.ChannelId][presence.UserId] = presence;
-            }
+                if (!_channelPresences.ContainsKey(presenceEvent.ChannelId))
+                {
+                    _channelPresences[presenceEvent.ChannelId] = new Dictionary<string, IUserPresence>();
+                }
 
-            foreach (var presence in presenceEvent.Leaves)
+                var map = _channelPresences[presenceEvent.ChannelId];
+
+                foreach (var presence in joinsSnapshot)
+                {
+                    map[presence.UserId] = presence;
+                }
+
+                foreach (var presence in leavesSnapshot)
+                {
+                    map.Remove(presence.UserId);
+                }
+            }
+            finally
             {
-                _channelPresences[presenceEvent.ChannelId].Remove(presence.UserId);
+                _gate.Release();
             }
-
-            await CollectUserIdsForPresence(presenceEvent.Joins);
+            
+            await CollectUserIdsForPresence(joinsSnapshot).ConfigureAwait(false);
 
             OnPresenceChanged?.Invoke(presenceEvent);
         }
 
         public IReadOnlyDictionary<string, IUserPresence> GetPresences(string channelId)
         {
-            return _channelPresences.TryGetValue(channelId, out var presences) ? presences : EmptyPresences;
+            _gate.Wait();
+            try
+            {
+                if (_channelPresences.TryGetValue(channelId, out var presences))
+                {
+                    var copy = new Dictionary<string, IUserPresence>(presences);
+                    return new ReadOnlyDictionary<string, IUserPresence>(copy);
+                }
+
+                return EmptyPresences;
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
 
         private async Task CollectUserIdsForPresence(IEnumerable<IUserPresence> presences)
@@ -108,11 +162,20 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public void Dispose()
         {
-            _channelReady.Clear();
-            _channelPresences.Clear();
-            
-            OnPresenceChanged = null;
-            OnChannelReady = null;
+            _gate.Wait();
+            try
+            {
+                _channelReady.Clear();
+                _channelPresences.Clear();
+
+                OnPresenceChanged = null;
+                OnChannelReady = null;
+            }
+            finally
+            {
+                _gate.Release();
+                _gate.Dispose();
+            }
         }
     }
 }

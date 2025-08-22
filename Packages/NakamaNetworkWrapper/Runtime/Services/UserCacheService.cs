@@ -17,6 +17,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly Dictionary<string, IApiUser> _userCache = new();
         private readonly SemaphoreSlim _semaphore = new(MaxConcurrentRequests);
         private readonly CancellationTokenSource _cancellationTokenSource = new();
+        private readonly SemaphoreSlim _gate = new(1, 1);
 
         private const int MaxUsersPerRequest = 100;
         private const int MaxConcurrentRequests = 5;
@@ -36,9 +37,23 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (string.IsNullOrEmpty(userId)) return null;
             if (_userCache.TryGetValue(userId, out var cached)) return cached;
-            
+
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token);
             linkedCts.CancelAfter(TimeSpan.FromSeconds(5));
+            
+            await _gate.WaitAsync(linkedCts.Token);
+            try
+            {
+                if (!_userCache.ContainsKey(userId))
+                {
+                    _usersIds.Add(userId);
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
             await LoadUsersAsync(linkedCts.Token);
 
             _userCache.TryGetValue(userId, out var result);
@@ -49,16 +64,25 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (ids == null) return;
 
-            foreach (var id in ids)
-            {
-                if (!string.IsNullOrEmpty(id))
-                {
-                    _usersIds.Add(id);
-                }
-            }
-            
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationTokenSource.Token);
             linkedCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            await _gate.WaitAsync(linkedCts.Token);
+            try
+            {
+                foreach (var id in ids)
+                {
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        _usersIds.Add(id);
+                    }
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
             await LoadUsersAsync(linkedCts.Token);
         }
 
@@ -66,9 +90,20 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
-            var userIdsToFetch = new List<string>(_usersIds.Where(id => !_userCache.ContainsKey(id)));
-            var tasks = new List<Task>();
+            List<string> userIdsToFetch;
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                userIdsToFetch = new List<string>(_usersIds.Where(id => !_userCache.ContainsKey(id)));
+            }
+            finally
+            {
+                _gate.Release();
+            }
 
+            if (userIdsToFetch.Count == 0) return;
+
+            var tasks = new List<Task>();
             foreach (var chunk in ChunkBy(userIdsToFetch, MaxUsersPerRequest))
             {
                 await _semaphore.WaitAsync(cancellationToken);
@@ -83,9 +118,18 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             try
             {
                 var users = await _clientService.Client.GetUsersAsync(session, userIds.ToArray(), canceller: cancellationToken);
-                foreach (var user in users.Users)
+
+                await _gate.WaitAsync(cancellationToken);
+                try
                 {
-                    _userCache[user.Id] = user;
+                    foreach (var user in users.Users)
+                    {
+                        _userCache[user.Id] = user;
+                    }
+                }
+                finally
+                {
+                    _gate.Release();
                 }
             }
             catch (Exception ex)
@@ -109,10 +153,21 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public void Dispose()
         {
             _cancellationTokenSource.Cancel();
+
+            _gate.Wait();
+            try
+            {
+                _usersIds?.Clear();
+                _userCache?.Clear();
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
             _cancellationTokenSource.Dispose();
-            _usersIds?.Clear();
-            _userCache?.Clear();
             _semaphore?.Dispose();
+            _gate.Dispose();
         }
     }
 }
