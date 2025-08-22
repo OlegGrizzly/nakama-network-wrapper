@@ -32,7 +32,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             var presencesSnapshot = new List<IUserPresence>(channel.Presences);
 
-            await _gate.WaitAsync().ConfigureAwait(false);
+            await _gate.WaitAsync();
             try
             {
                 if (!_channelPresences.ContainsKey(channel.Id))
@@ -50,8 +50,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _gate.Release();
             }
-            
-            await CollectUserIdsForPresence(presencesSnapshot).ConfigureAwait(false);
+
+            await CollectUserIdsForPresence(presencesSnapshot);
 
             MarkChannelReady(channel.Id);
         }
@@ -79,7 +79,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var joinsSnapshot = new List<IUserPresence>(presenceEvent.Joins);
             var leavesSnapshot = new List<IUserPresence>(presenceEvent.Leaves);
 
-            await _gate.WaitAsync().ConfigureAwait(false);
+            await _gate.WaitAsync();
             try
             {
                 if (!_channelPresences.ContainsKey(presenceEvent.ChannelId))
@@ -103,8 +103,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _gate.Release();
             }
-            
-            await CollectUserIdsForPresence(joinsSnapshot).ConfigureAwait(false);
+
+            await CollectUserIdsForPresence(joinsSnapshot);
 
             OnPresenceChanged?.Invoke(presenceEvent);
         }
