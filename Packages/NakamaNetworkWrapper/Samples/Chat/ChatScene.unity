@@ -5246,7 +5246,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 71e994e88a366498ebf57773acc384b2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  connectionConfig: {fileID: 11400000, guid: 36ad1755e91054de18f5764419f1f49c, type: 2}
+  connectionConfig: {fileID: 11400000, guid: 342b3ca8000104205ad12a786bc3143e, type: 2}
   connectButton: {fileID: 1664600}
   disconnectButton: {fileID: 673390350}
   scrollRect: {fileID: 1953699856}

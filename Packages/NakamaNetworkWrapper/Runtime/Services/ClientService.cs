@@ -103,6 +103,22 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
         }
         
+        public async Task<IApiRpc> RpcAsync(string rpcName, string payload = null)
+        {
+            if (string.IsNullOrWhiteSpace(rpcName)) throw new ArgumentException("RPC name required", nameof(rpcName));
+            if (_socket is not { IsConnected: true }) throw new InvalidOperationException("Socket is not connected");
+            
+            try
+            {
+                return await _socket.RpcAsync(rpcName, payload ?? string.Empty);
+            }
+            catch (ApiResponseException ex)
+            {
+                Debug.LogError($"RPC '{rpcName}' failed: {ex.StatusCode} {ex.Message}");
+                throw;
+            }
+        }
+        
         private void AttachSocketEvents(ISocket socket)
         {
             socket.Connected += Connected;

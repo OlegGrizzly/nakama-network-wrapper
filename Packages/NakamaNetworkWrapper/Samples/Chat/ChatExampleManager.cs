@@ -354,13 +354,13 @@ namespace Samples.Chat
 
 		private static string MakeJsonContent(string text)
 		{
-			if (string.IsNullOrEmpty(text)) return "{\"text\":\"\"}";
+			if (string.IsNullOrEmpty(text)) return "{\"message\":\"\"}";
 			var escaped = text
 				.Replace("\\", "\\\\")
 				.Replace("\"", "\\\"")
 				.Replace("\n", "\\n")
 				.Replace("\r", "\\r");
-			return $"{{\"text\":\"{escaped}\"}}";
+			return $"{{\"message\":\"{escaped}\"}}";
 		}
 
 		private async void OnPresenceChanged(IChannelPresenceEvent presenceEvent)

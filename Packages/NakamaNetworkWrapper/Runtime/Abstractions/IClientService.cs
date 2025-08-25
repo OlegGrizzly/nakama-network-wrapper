@@ -22,6 +22,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         
         Task DisconnectAsync();
         
+        Task<IApiRpc> RpcAsync(string rpcName, string payload = null);
+        
         IClient Client { get; }
         
         ISocket Socket { get; }
