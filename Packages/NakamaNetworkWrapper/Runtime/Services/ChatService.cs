@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
@@ -33,7 +32,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public event Action<IChannel> OnLeftChannel;
         public event Action<IApiChannelMessage> OnMessageReceived;
 
-        public IReadOnlyDictionary<string, IChannel> JoinedChannels => new ReadOnlyDictionary<string, IChannel>(new Dictionary<string, IChannel>(_channels));
+        public IReadOnlyDictionary<string, IChannel> JoinedChannels => _channels;
 
         public IChannel GetChannel(string channelId) => channelId != null && _channels.TryGetValue(channelId, out var ch) ? ch : null;
 
@@ -44,7 +43,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
             var channel = await socket.JoinChatAsync(channelId, channelType, persistence, hidden);
             
-            RegisterChannel(channelId, channel);
+            RegisterChannel(channel.Id, channel);
             
             if (_chatPresenceService != null)
             {
@@ -69,7 +68,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
                 
                 UnregisterChannel(channelId);
-                _chatPresenceService?.RemoveChannelPresences(channel);
+                if (_chatPresenceService != null)
+                {
+                    await _chatPresenceService.RemoveChannelPresencesAsync(channel);
+                }
             }
             catch (Exception ex)
             {
@@ -191,7 +193,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private void ReceivedChannelPresence(IChannelPresenceEvent presenceEvent)
         {
-            _chatPresenceService?.PresenceChanged(presenceEvent);
+            if (_chatPresenceService != null)
+            {
+                _ = _chatPresenceService.PresenceChangedAsync(presenceEvent);
+            }
         }
         
         private async Task CollectUserIdsForMessages(IApiChannelMessageList messageList)

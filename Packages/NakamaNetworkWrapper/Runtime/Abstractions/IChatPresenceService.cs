@@ -15,9 +15,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         
         Task AddChannelPresencesAsync(IChannel channel);
         
-        void RemoveChannelPresences(IChannel channel);
+        Task RemoveChannelPresencesAsync(IChannel channel);
 
-        void PresenceChanged(IChannelPresenceEvent presenceEvent);
+        Task PresenceChangedAsync(IChannelPresenceEvent presenceEvent);
         
         IReadOnlyDictionary<string, IUserPresence> GetPresences(string channelId);
     }

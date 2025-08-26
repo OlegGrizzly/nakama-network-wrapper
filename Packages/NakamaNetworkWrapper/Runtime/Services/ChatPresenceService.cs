@@ -56,11 +56,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             MarkChannelReady(channel.Id);
         }
 
-        public void RemoveChannelPresences(IChannel channel)
+        public async Task RemoveChannelPresencesAsync(IChannel channel)
         {
             if (channel == null) return;
 
-            _gate.Wait();
+            await _gate.WaitAsync();
             try
             {
                 _channelReady.Remove(channel.Id);
@@ -72,7 +72,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
         }
 
-        public async void PresenceChanged(IChannelPresenceEvent presenceEvent)
+        public async Task PresenceChangedAsync(IChannelPresenceEvent presenceEvent)
         {
             if (presenceEvent == null) return;
             
