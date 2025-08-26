@@ -5269,6 +5269,7 @@ MonoBehaviour:
   updateMsgButton: {fileID: 1568582810}
   removeMsgButton: {fileID: 386452860}
   listParticipantsButton: {fileID: 1670537631}
+  presenceCountersText: {fileID: 1737067593}
 --- !u!1 &1725841139
 GameObject:
   m_ObjectHideFlags: 0

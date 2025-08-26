@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
@@ -11,6 +12,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
     public class ChatPresenceService : IChatPresenceService, IDisposable
     {
+        private readonly ICoroutineRunner _coroutineRunner;
         private readonly IUserCacheService _userCacheService;
         private readonly Dictionary<string, Dictionary<string, Dictionary<string, IUserPresence>>> _channelPresences = new();
         private readonly Dictionary<(string channelId, string userId, string sessionId), CancellationTokenSource> _pendingLeaves = new();
@@ -19,8 +21,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly Dictionary<string, TaskCompletionSource<bool>> _channelReady = new();
         private readonly SemaphoreSlim _gate = new(1, 1);
 
-        public ChatPresenceService(IUserCacheService userCacheService = null)
+        public ChatPresenceService(ICoroutineRunner coroutineRunner, IUserCacheService userCacheService = null)
         {
+            _coroutineRunner = coroutineRunner;
             _userCacheService = userCacheService;
         }
         
@@ -45,8 +48,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
 
                 var usersMap = _channelPresences[channel.Id];
-                var beforeUsers = usersMap.Count;
-                var beforeSessions = CountSessions(usersMap);
                 foreach (var presence in presencesSnapshot)
                 {
                     if (!usersMap.TryGetValue(presence.UserId, out var sessionsMap))
@@ -59,10 +60,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
                     CancelPendingLeave(channel.Id, presence.UserId, presence.SessionId);
                 }
-
-                var afterUsers = usersMap.Count;
-                var afterSessions = CountSessions(usersMap);
-                Debug.LogWarning($"[Presence] AddPresences ch={channel.Id} snap={presencesSnapshot.Count} users {beforeUsers}->{afterUsers} sessions {beforeSessions}->{afterSessions}");
             }
             finally
             {
@@ -81,10 +78,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             await _gate.WaitAsync();
             try
             {
-                var hadReady = _channelReady.Remove(channel.Id);
-                var hadMap = _channelPresences.TryGetValue(channel.Id, out var usersMap);
-                var users = hadMap ? usersMap.Count : 0;
-                var sessions = hadMap ? CountSessions(usersMap) : 0;
                 _channelPresences.Remove(channel.Id);
 
                 var toCancel = new List<(string channelId, string userId, string sessionId)>();
@@ -103,8 +96,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                         cts.Dispose();
                     }
                 }
-
-                Debug.LogWarning($"[Presence] RemoveChannel ch={channel.Id} ready={hadReady} users={users} sessions={sessions} pendingLeavesCancelled={toCancel.Count}");
             }
             finally
             {
@@ -128,9 +119,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
 
                 var usersMap = _channelPresences[presenceEvent.ChannelId];
-                var beforeUsers = usersMap.Count;
-                var beforeSessions = CountSessions(usersMap);
-
+                
                 foreach (var presence in joinsSnapshot)
                 {
                     if (!usersMap.TryGetValue(presence.UserId, out var sessionsMap))
@@ -147,10 +136,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     ScheduleLeaveRemoval(presenceEvent.ChannelId, presence.UserId, presence.SessionId);
                 }
-
-                var afterUsers = usersMap.Count;
-                var afterSessions = CountSessions(usersMap);
-                Debug.LogWarning($"[Presence] Change ch={presenceEvent.ChannelId} joins={joinsSnapshot.Count} leaves={leavesSnapshot.Count} users {beforeUsers}->{afterUsers} sessions {beforeSessions}->{afterSessions} (leaves scheduled with grace)");
             }
             finally
             {
@@ -240,7 +225,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             tcs.TrySetResult(true);
             
             OnChannelReady?.Invoke(channelId);
-            Debug.LogWarning($"[Presence] ChannelReady ch={channelId}");
         }
 
         private void CancelPendingLeave(string channelId, string userId, string sessionId)
@@ -251,7 +235,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 cts.Cancel();
                 cts.Dispose();
                 _pendingLeaves.Remove(key);
-                Debug.LogWarning($"[Presence] CancelPendingLeave ch={channelId} user={userId} session={sessionId}");
             }
         }
 
@@ -267,14 +250,13 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _pendingLeaves[key] = cts;
             
             _ = RemoveSessionAfterGraceAsync(channelId, userId, sessionId, cts.Token);
-            Debug.LogWarning($"[Presence] ScheduleLeave ch={channelId} user={userId} session={sessionId} grace={_leaveGrace.TotalSeconds:F0}s");
         }
 
         private async Task RemoveSessionAfterGraceAsync(string channelId, string userId, string sessionId, CancellationToken token)
         {
             try
             {
-                await Task.Delay(_leaveGrace, token);
+                await RunDelayCoroutine(token);
             }
             catch (TaskCanceledException)
             {
@@ -292,10 +274,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     {
                         usersMap.Remove(userId);
                     }
-
-                    var users = usersMap.Count;
-                    var sessions = CountSessions(usersMap);
-                    Debug.LogWarning($"[Presence] LeaveCommitted ch={channelId} user={userId} session={sessionId} -> users={users} sessions={sessions}");
                 }
             }
             finally
@@ -308,6 +286,36 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 cts.Dispose();
             }
+        }
+
+        private Task RunDelayCoroutine(CancellationToken token)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var coroutine = DelayRoutine(tcs, token);
+            
+            _coroutineRunner.StartCoroutine(coroutine);
+            
+            return tcs.Task;
+        }
+
+        private IEnumerator DelayRoutine(TaskCompletionSource<bool> tcs, CancellationToken token)
+        {
+            var elapsed = 0f;
+            var duration = (float) _leaveGrace.TotalSeconds;
+
+            while (elapsed < duration)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    tcs.TrySetCanceled(token);
+                    yield break;
+                }
+
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+
+            tcs.TrySetResult(true);
         }
         
         public void Dispose()
@@ -326,16 +334,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _gate.Release();
                 _gate.Dispose();
             }
-        }
-
-        private static int CountSessions(Dictionary<string, Dictionary<string, IUserPresence>> usersMap)
-        {
-            var total = 0;
-            foreach (var kv in usersMap)
-            {
-                total += kv.Value.Count;
-            }
-            return total;
         }
     }
 }

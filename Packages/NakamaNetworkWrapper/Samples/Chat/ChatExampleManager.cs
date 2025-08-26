@@ -11,10 +11,11 @@ using OlegGrizzly.NakamaNetworkWrapper.Services;
 using OlegGrizzly.NakamaNetworkWrapper.Utils;
 using UnityEngine;
 using UnityEngine.UI;
+using System.Threading.Tasks;
 
 namespace Samples.Chat
 {
-	public class ChatExampleManager : MonoBehaviour
+	public class ChatExampleManager : MonoBehaviour, ICoroutineRunner
 	{
 		[SerializeField] private ConnectionConfig connectionConfig;
 		[SerializeField] private Button connectButton;
@@ -41,6 +42,7 @@ namespace Samples.Chat
 		[SerializeField] private Button updateMsgButton;
 		[SerializeField] private Button removeMsgButton;
 		[SerializeField] private Button listParticipantsButton;
+		[SerializeField] private Text presenceCountersText;
 
 		private IClientService _clientService;
 		private IDeviceIdProvider _deviceIdProvider;
@@ -87,7 +89,7 @@ namespace Samples.Chat
 			_authService = new AuthService(_clientService, tokenPersistence);
 
 			_userCacheService = new UserCacheService(_clientService, _authService);
-			_chatPresenceService = new ChatPresenceService(_userCacheService);
+			_chatPresenceService = new ChatPresenceService(this, _userCacheService);
 			_chatService = new ChatService(_clientService, _authService, _userCacheService, _chatPresenceService);
 			_chatService.OnMessageReceived += OnMessageReceived;
 
@@ -384,6 +386,7 @@ namespace Samples.Chat
 			}
 
 			Debug.Log($"Channel {channelId} presence changed. Current count: {count}");
+			await UpdatePresenceCountersAsync(channelId);
 		}
 
 		private async void OnChannelReady(string channelId)
@@ -402,10 +405,48 @@ namespace Samples.Chat
 				}
 				
 				Debug.Log($"Channel {channelId} participants: {string.Join(", ", names)}. Current count: {names.Count}");
+				await UpdatePresenceCountersAsync(channelId);
 			}
 			catch (Exception ex)
 			{
 				Debug.LogError($"Failed to list participants for channel {channelId}: {ex.Message}");
+			}
+		}
+
+		private async Task UpdatePresenceCountersAsync(string channelId)
+		{
+			try
+			{
+				var presencesDict = _chatPresenceService.GetPresences(channelId);
+				var presences = presencesDict.Values.ToList();
+				var total = presences.Count;
+				var tasks = new List<Task<IApiUser>>(total);
+				
+				foreach (var t in presences)
+				{
+					tasks.Add(_userCacheService.GetUserAsync(t.UserId));
+				}
+				
+				var users = await Task.WhenAll(tasks);
+				var withDisplayName = 0;
+				
+				foreach (var t in users)
+				{
+					if (!string.IsNullOrWhiteSpace(t?.DisplayName))
+					{
+						withDisplayName++;
+					}
+				}
+				var textValue = $"{withDisplayName}/{total}";
+				if (presenceCountersText != null)
+				{
+					presenceCountersText.text = textValue;
+				}
+				Debug.Log(textValue);
+			}
+			catch (Exception ex)
+			{
+				Debug.LogError($"Failed to compute presence counters for channel {channelId}: {ex.Message}");
 			}
 		}
 	}
