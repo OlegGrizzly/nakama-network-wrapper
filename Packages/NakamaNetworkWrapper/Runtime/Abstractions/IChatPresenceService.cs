@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Nakama;
+using OlegGrizzly.NakamaNetworkWrapper.Models;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
 {
@@ -9,7 +10,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
     {
         event Action<string> OnChannelReady;
         
-        event Action<IChannelPresenceEvent> OnPresenceChanged;
+        event Action<LocalPresenceEvent> OnPresenceChanged;
         
         bool IsChannelReady(string channelId);
         

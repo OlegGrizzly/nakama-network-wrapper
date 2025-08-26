@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
+using OlegGrizzly.NakamaNetworkWrapper.Models;
 using UnityEngine;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
@@ -29,7 +30,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public event Action<string> OnChannelReady;
         
-        public event Action<IChannelPresenceEvent> OnPresenceChanged;
+        public event Action<LocalPresenceEvent> OnPresenceChanged;
         
         public bool IsChannelReady(string channelId) => _channelReady.TryGetValue(channelId, out var tcs) && tcs.Task.IsCompleted;
         
@@ -110,6 +111,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var joinsSnapshot = new List<IUserPresence>(presenceEvent.Joins);
             var leavesSnapshot = new List<IUserPresence>(presenceEvent.Leaves);
 
+            List<IUserPresence> userLevelJoins = new();
+
             await _gate.WaitAsync();
             try
             {
@@ -122,14 +125,25 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 
                 foreach (var presence in joinsSnapshot)
                 {
+                    bool isNewUser = false;
                     if (!usersMap.TryGetValue(presence.UserId, out var sessionsMap))
                     {
                         sessionsMap = new Dictionary<string, IUserPresence>();
                         usersMap[presence.UserId] = sessionsMap;
+                        isNewUser = true;
+                    }
+                    else if (sessionsMap.Count == 0)
+                    {
+                        isNewUser = true;
                     }
                     sessionsMap[presence.SessionId] = presence;
 
                     CancelPendingLeave(presenceEvent.ChannelId, presence.UserId, presence.SessionId);
+
+                    if (isNewUser)
+                    {
+                        userLevelJoins.Add(presence);
+                    }
                 }
 
                 foreach (var presence in leavesSnapshot)
@@ -144,7 +158,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
             await CollectUserIdsForPresence(joinsSnapshot);
 
-            OnPresenceChanged?.Invoke(presenceEvent);
+            if (userLevelJoins.Count > 0)
+            {
+                OnPresenceChanged?.Invoke(new LocalPresenceEvent(presenceEvent.ChannelId, userLevelJoins, Array.Empty<IUserPresence>()));
+            }
         }
 
         public IReadOnlyDictionary<string, IUserPresence> GetPresences(string channelId)
@@ -254,6 +271,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private async Task RemoveSessionAfterGraceAsync(string channelId, string userId, string sessionId, CancellationToken token)
         {
+            IUserPresence removedPresence = null;
             try
             {
                 await RunDelayCoroutine(token);
@@ -269,6 +287,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 if (_channelPresences.TryGetValue(channelId, out var usersMap) &&
                     usersMap.TryGetValue(userId, out var sessionsMap))
                 {
+                    if (sessionsMap.TryGetValue(sessionId, out var removedPresenceCandidate))
+                    {
+                        removedPresence = removedPresenceCandidate;
+                    }
                     sessionsMap.Remove(sessionId);
                     if (sessionsMap.Count == 0)
                     {
@@ -285,6 +307,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (_pendingLeaves.Remove(key, out var cts))
             {
                 cts.Dispose();
+            }
+
+            if (removedPresence != null)
+            {
+                OnPresenceChanged?.Invoke(new LocalPresenceEvent(channelId, Array.Empty<IUserPresence>(), new[] { removedPresence }));
             }
         }
 

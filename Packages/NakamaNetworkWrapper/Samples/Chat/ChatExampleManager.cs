@@ -12,6 +12,7 @@ using OlegGrizzly.NakamaNetworkWrapper.Utils;
 using UnityEngine;
 using UnityEngine.UI;
 using System.Threading.Tasks;
+using OlegGrizzly.NakamaNetworkWrapper.Models;
 
 namespace Samples.Chat
 {
@@ -365,7 +366,7 @@ namespace Samples.Chat
 			return $"{{\"message\":\"{escaped}\"}}";
 		}
 
-		private async void OnPresenceChanged(IChannelPresenceEvent presenceEvent)
+		private async void OnPresenceChanged(LocalPresenceEvent presenceEvent)
 		{
 			var channelId = presenceEvent.ChannelId;
 			var presences = _chatPresenceService.GetPresences(channelId);
