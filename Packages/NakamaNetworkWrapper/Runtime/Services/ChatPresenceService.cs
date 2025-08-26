@@ -76,6 +76,23 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _channelReady.Remove(channel.Id);
                 _channelPresences.Remove(channel.Id);
+
+                var toCancel = new List<(string channelId, string userId, string sessionId)>();
+                foreach (var kv in _pendingLeaves)
+                {
+                    if (kv.Key.channelId == channel.Id)
+                    {
+                        toCancel.Add(kv.Key);
+                    }
+                }
+                foreach (var k in toCancel)
+                {
+                    if (_pendingLeaves.Remove(k, out var cts))
+                    {
+                        cts.Cancel();
+                        cts.Dispose();
+                    }
+                }
             }
             finally
             {
