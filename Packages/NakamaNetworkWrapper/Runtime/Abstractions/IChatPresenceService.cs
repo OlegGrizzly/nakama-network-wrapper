@@ -20,5 +20,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         Task PresenceChangedAsync(IChannelPresenceEvent presenceEvent);
         
         IReadOnlyDictionary<string, IUserPresence> GetPresences(string channelId);
+
+        Task ClearAllAsync();
     }
 }

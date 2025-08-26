@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
@@ -10,10 +11,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
     public class ChatPresenceService : IChatPresenceService, IDisposable
     {
         private readonly IUserCacheService _userCacheService;
-        private readonly Dictionary<string, Dictionary<string, IUserPresence>> _channelPresences = new();
+        private readonly Dictionary<string, Dictionary<string, Dictionary<string, IUserPresence>>> _channelPresences = new();
+        private readonly Dictionary<(string channelId, string userId, string sessionId), CancellationTokenSource> _pendingLeaves = new();
+        private readonly TimeSpan _leaveGrace = TimeSpan.FromSeconds(5);
         private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new ReadOnlyDictionary<string, IUserPresence>(new Dictionary<string, IUserPresence>());
         private readonly Dictionary<string, TaskCompletionSource<bool>> _channelReady = new();
-        private readonly System.Threading.SemaphoreSlim _gate = new(1, 1);
+        private readonly SemaphoreSlim _gate = new(1, 1);
 
         public ChatPresenceService(IUserCacheService userCacheService = null)
         {
@@ -37,13 +40,21 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 if (!_channelPresences.ContainsKey(channel.Id))
                 {
-                    _channelPresences[channel.Id] = new Dictionary<string, IUserPresence>();
+                    _channelPresences[channel.Id] = new Dictionary<string, Dictionary<string, IUserPresence>>();
                 }
 
-                var map = _channelPresences[channel.Id];
+                var usersMap = _channelPresences[channel.Id];
                 foreach (var presence in presencesSnapshot)
                 {
-                    map[presence.UserId] = presence;
+                    if (!usersMap.TryGetValue(presence.UserId, out var sessionsMap))
+                    {
+                        sessionsMap = new Dictionary<string, IUserPresence>();
+                        usersMap[presence.UserId] = sessionsMap;
+                    }
+
+                    sessionsMap[presence.SessionId] = presence;
+
+                    CancelPendingLeave(channel.Id, presence.UserId, presence.SessionId);
                 }
             }
             finally
@@ -84,19 +95,26 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 if (!_channelPresences.ContainsKey(presenceEvent.ChannelId))
                 {
-                    _channelPresences[presenceEvent.ChannelId] = new Dictionary<string, IUserPresence>();
+                    _channelPresences[presenceEvent.ChannelId] = new Dictionary<string, Dictionary<string, IUserPresence>>();
                 }
 
-                var map = _channelPresences[presenceEvent.ChannelId];
+                var usersMap = _channelPresences[presenceEvent.ChannelId];
 
                 foreach (var presence in joinsSnapshot)
                 {
-                    map[presence.UserId] = presence;
+                    if (!usersMap.TryGetValue(presence.UserId, out var sessionsMap))
+                    {
+                        sessionsMap = new Dictionary<string, IUserPresence>();
+                        usersMap[presence.UserId] = sessionsMap;
+                    }
+                    sessionsMap[presence.SessionId] = presence;
+
+                    CancelPendingLeave(presenceEvent.ChannelId, presence.UserId, presence.SessionId);
                 }
 
                 foreach (var presence in leavesSnapshot)
                 {
-                    map.Remove(presence.UserId);
+                    ScheduleLeaveRemoval(presenceEvent.ChannelId, presence.UserId, presence.SessionId);
                 }
             }
             finally
@@ -114,13 +132,42 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _gate.Wait();
             try
             {
-                if (_channelPresences.TryGetValue(channelId, out var presences))
+                if (_channelPresences.TryGetValue(channelId, out var usersMap))
                 {
-                    var copy = new Dictionary<string, IUserPresence>(presences);
+                    var copy = new Dictionary<string, IUserPresence>();
+                    foreach (var userEntry in usersMap)
+                    {
+                        foreach (var sessionEntry in userEntry.Value)
+                        {
+                            copy[userEntry.Key] = sessionEntry.Value;
+                            break;
+                        }
+                    }
                     return new ReadOnlyDictionary<string, IUserPresence>(copy);
                 }
 
                 return EmptyPresences;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public async Task ClearAllAsync()
+        {
+            await _gate.WaitAsync();
+            try
+            {
+                foreach (var kv in _pendingLeaves)
+                {
+                    kv.Value.Cancel();
+                    kv.Value.Dispose();
+                }
+                _pendingLeaves.Clear();
+
+                _channelReady.Clear();
+                _channelPresences.Clear();
             }
             finally
             {
@@ -158,6 +205,67 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             tcs.TrySetResult(true);
             
             OnChannelReady?.Invoke(channelId);
+        }
+
+        private void CancelPendingLeave(string channelId, string userId, string sessionId)
+        {
+            var key = (channelId, userId, sessionId);
+            if (_pendingLeaves.TryGetValue(key, out var cts))
+            {
+                cts.Cancel();
+                cts.Dispose();
+                _pendingLeaves.Remove(key);
+            }
+        }
+
+        private void ScheduleLeaveRemoval(string channelId, string userId, string sessionId)
+        {
+            var key = (channelId, userId, sessionId);
+            if (_pendingLeaves.ContainsKey(key))
+            {
+                return;
+            }
+
+            var cts = new CancellationTokenSource();
+            _pendingLeaves[key] = cts;
+            
+            _ = RemoveSessionAfterGraceAsync(channelId, userId, sessionId, cts.Token);
+        }
+
+        private async Task RemoveSessionAfterGraceAsync(string channelId, string userId, string sessionId, CancellationToken token)
+        {
+            try
+            {
+                await Task.Delay(_leaveGrace, token);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            await _gate.WaitAsync(token);
+            try
+            {
+                if (_channelPresences.TryGetValue(channelId, out var usersMap) &&
+                    usersMap.TryGetValue(userId, out var sessionsMap))
+                {
+                    sessionsMap.Remove(sessionId);
+                    if (sessionsMap.Count == 0)
+                    {
+                        usersMap.Remove(userId);
+                    }
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            var key = (channelId, userId, sessionId);
+            if (_pendingLeaves.Remove(key, out var cts))
+            {
+                cts.Dispose();
+            }
         }
         
         public void Dispose()
