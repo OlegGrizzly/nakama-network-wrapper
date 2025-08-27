@@ -120,7 +120,14 @@ namespace Samples.Example
 
         private void OnDestroy()
         {
+            connectButton.onClick.RemoveListener(OnConnectClicked);
+            disconnectButton.onClick.RemoveListener(OnDisconnectClicked);
+            
             _stateMachine?.Dispose();
+            _clientService?.Dispose();
+
+            _stateMachine = null;
+            _clientService = null;
         }
 
         private async Task TestStorageAsync()

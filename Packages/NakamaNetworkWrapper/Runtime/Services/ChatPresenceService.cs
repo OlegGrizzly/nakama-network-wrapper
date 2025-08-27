@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
-    public class ChatPresenceService : IChatPresenceService, IDisposable
+    public class ChatPresenceService : IChatPresenceService
     {
         private readonly ICoroutineRunner _coroutineRunner;
         private readonly IUserCacheService _userCacheService;
@@ -350,6 +350,21 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _gate.Wait();
             try
             {
+                foreach (var kv in _pendingLeaves)
+                {
+                    try
+                    {
+                        kv.Value.Cancel();
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+
+                    kv.Value.Dispose();
+                }
+                _pendingLeaves.Clear();
+                
                 _channelReady.Clear();
                 _channelPresences.Clear();
 

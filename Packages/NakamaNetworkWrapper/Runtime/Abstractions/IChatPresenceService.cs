@@ -6,7 +6,7 @@ using OlegGrizzly.NakamaNetworkWrapper.Models;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
 {
-    public interface IChatPresenceService
+    public interface IChatPresenceService : IDisposable
     {
         event Action<string> OnChannelReady;
         

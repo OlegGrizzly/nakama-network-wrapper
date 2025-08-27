@@ -58,7 +58,7 @@ namespace Samples.Chat
 		private string _nextCursor;
 		private bool _forward;
 
-		private void Awake()
+		private void OnEnable()
 		{
 			connectButton.onClick.AddListener(OnConnectClicked);
 			disconnectButton.onClick.AddListener(OnDisconnectClicked);
@@ -73,6 +73,23 @@ namespace Samples.Chat
 			listPrevButton.onClick.AddListener(OnListPrevClicked);
 			updateMsgButton.onClick.AddListener(OnUpdateMessageClicked);
 			removeMsgButton.onClick.AddListener(OnRemoveMessageClicked);
+		}
+
+		private void OnDisable()
+		{
+			connectButton.onClick.RemoveListener(OnConnectClicked);
+			disconnectButton.onClick.RemoveListener(OnDisconnectClicked);
+
+			joinRoomButton.onClick.RemoveListener(OnJoinRoomClicked);
+			joinGroupButton.onClick.RemoveListener(OnJoinGroupClicked);
+			joinDirectButton.onClick.RemoveListener(OnJoinDirectClicked);
+			leaveButton.onClick.RemoveListener(OnLeaveClicked);
+			sendButton.onClick.RemoveListener(OnSendClicked);
+			listButton.onClick.RemoveListener(OnListClicked);
+			listNextButton.onClick.RemoveListener(OnListNextClicked);
+			listPrevButton.onClick.RemoveListener(OnListPrevClicked);
+			updateMsgButton.onClick.RemoveListener(OnUpdateMessageClicked);
+			removeMsgButton.onClick.RemoveListener(OnRemoveMessageClicked);
 		}
 
 		private async void Start()
@@ -347,12 +364,17 @@ namespace Samples.Chat
 				_chatService.OnMessageReceived -= OnMessageReceived;
 				_chatService.Dispose();
 			}
-			_stateMachine?.Dispose();
+
 			if (_chatPresenceService != null)
 			{
 				_chatPresenceService.OnPresenceChanged -= OnPresenceChanged;
 				_chatPresenceService.OnChannelReady -= OnChannelReady;
+				_chatPresenceService.Dispose();
 			}
+			
+			_userCacheService?.Dispose();
+			_clientService?.Dispose();
+			_stateMachine?.Dispose();
 		}
 
 		private static string MakeJsonContent(string text)

@@ -9,7 +9,7 @@ using System.Linq;
 
 namespace OlegGrizzly.NakamaNetworkWrapper.Services
 {
-    public class UserCacheService : IUserCacheService, IDisposable
+    public class UserCacheService : IUserCacheService
     {
         private readonly IClientService _clientService;
         private readonly IAuthService _authService;

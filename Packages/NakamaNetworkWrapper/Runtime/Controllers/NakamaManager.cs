@@ -30,5 +30,11 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
                 await _authService.LoginAsync(AuthType.Custom, deviceId);
             }
         }
+        
+        private void OnDestroy()
+        {
+            _clientService?.Dispose();
+            _clientService = null;
+        }
     }
 }
