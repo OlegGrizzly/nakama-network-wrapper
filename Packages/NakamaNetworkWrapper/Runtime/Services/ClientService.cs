@@ -156,26 +156,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             Debug.LogError(error);
             OnReceivedError?.Invoke(error);
         }
-        
-        public void Dispose()
-        {
-            if (_disposed) return;
-            
-            _disposed = true;
-            
-            _shutdownCts.Cancel();
-            _shutdownCts.Dispose();
-
-            if (_socket != null)
-            {
-                DetachSocketEvents(_socket);
-                
-                _ = _socket.CloseAsync();
-                _socket = null;
-            }
-
-            _connectionGate.Dispose();
-        }
 
         private void ResetShutdownCts()
         {
@@ -201,6 +181,34 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     _socket = null;
                 }
             }
+        }
+        
+        public void Dispose()
+        {
+            if (_disposed) return;
+            
+            _disposed = true;
+            
+            _shutdownCts.Cancel();
+            _shutdownCts.Dispose();
+
+            if (_socket != null)
+            {
+                DetachSocketEvents(_socket);
+
+                try
+                {
+                    _ = _socket.CloseAsync();
+                }
+                catch
+                {
+                    // ignored
+                }
+
+                _socket = null;
+            }
+
+            _connectionGate.Dispose();
         }
     }
 }

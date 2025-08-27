@@ -231,7 +231,6 @@ namespace Samples.Chat
 					Log("No active channel", Color.red);
 					return;
 				}
-				_forward = false; // list newest->oldest from server, then reverse for UI oldest->newest
 				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, forward: _forward);
 				PrintPage(page);
@@ -246,7 +245,6 @@ namespace Samples.Chat
 		{
 			try
 			{
-				// Next → показать следующую страницу по времени UI (т.е. более старые при _forward=false)
 				if (string.IsNullOrWhiteSpace(_currentChannelId) || string.IsNullOrWhiteSpace(_prevCursor)) return;
 				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, _prevCursor, _forward);
@@ -262,7 +260,6 @@ namespace Samples.Chat
 		{
 			try
 			{
-				// Prev → показать предыдущую страницу по времени UI (т.е. более новые при _forward=false)
 				if (string.IsNullOrWhiteSpace(_currentChannelId) || string.IsNullOrWhiteSpace(_nextCursor)) return;
 				logText.text = "";
 				var page = await _chatService.ListMessagesAsync(_currentChannelId, 5, _nextCursor, _forward);
