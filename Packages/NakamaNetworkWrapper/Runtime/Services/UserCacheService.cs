@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
 using UnityEngine;
@@ -17,12 +16,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly HashSet<string> _usersIds = new();
         private readonly Dictionary<string, IApiUser> _userCache = new();
         private readonly SemaphoreSlim _semaphore = new(MaxConcurrentRequests);
-        private readonly CancellationTokenSource _cancellationTokenSource = new();
         private readonly SemaphoreSlim _gate = new(1, 1);
 
-        private readonly ConcurrentDictionary<string, TaskCompletionSource<IApiUser>> _waiters = new(StringComparer.Ordinal);
-
-        private const int MaxUsersPerRequest = 50;
+        private const int MaxUsersPerRequest = 100;
         private const int MaxConcurrentRequests = 5;
         
         public UserCacheService(IClientService clientService, IAuthService authService)
@@ -40,10 +36,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (string.IsNullOrEmpty(userId)) return null;
             if (_userCache.TryGetValue(userId, out var cached)) return cached;
-            
-            var tcs = _waiters.GetOrAdd(userId, _ => new TaskCompletionSource<IApiUser>(TaskCreationOptions.RunContinuationsAsynchronously));
 
-            await _gate.WaitAsync(_cancellationTokenSource.Token);
+            await _gate.WaitAsync();
             try
             {
                 if (!_userCache.ContainsKey(userId))
@@ -55,26 +49,25 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _gate.Release();
             }
-            
-            _ = LoadUsersAsync(_cancellationTokenSource.Token);
-            
-            return await tcs.Task;
+
+            await LoadUsersAsync();
+
+            _userCache.TryGetValue(userId, out var result);
+            return result;
         }
 
         public async Task CollectUserIdsAsync(HashSet<string> ids)
         {
-            if (ids == null || ids.Count == 0) return;
+            if (ids == null) return;
 
-            await _gate.WaitAsync(_cancellationTokenSource.Token);
+            await _gate.WaitAsync();
             try
             {
                 foreach (var id in ids)
                 {
-                    if (string.IsNullOrEmpty(id)) continue;
-                    if (!_userCache.ContainsKey(id))
+                    if (!string.IsNullOrEmpty(id))
                     {
                         _usersIds.Add(id);
-                        _waiters.TryAdd(id, new TaskCompletionSource<IApiUser>(TaskCreationOptions.RunContinuationsAsynchronously));
                     }
                 }
             }
@@ -82,16 +75,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _gate.Release();
             }
-            
-            _ = LoadUsersAsync(_cancellationTokenSource.Token);
+
+            await LoadUsersAsync();
         }
 
-        private async Task LoadUsersAsync(CancellationToken cancellationToken = default)
+        private async Task LoadUsersAsync()
         {
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
             List<string> userIdsToFetch;
-            await _gate.WaitAsync(cancellationToken);
+            await _gate.WaitAsync();
             try
             {
                 userIdsToFetch = new List<string>(_usersIds.Where(id => !_userCache.ContainsKey(id)));
@@ -103,27 +96,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
             if (userIdsToFetch.Count == 0) return;
 
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var tasks = new List<Task>();
+            
             foreach (var chunk in ChunkBy(userIdsToFetch, MaxUsersPerRequest))
             {
-                await _semaphore.WaitAsync(cancellationToken);
-                tasks.Add(LoadUserChunkAsync(chunk, session, cancellationToken));
+                await _semaphore.WaitAsync();
+                tasks.Add(LoadUserChunkAsync(chunk, session, timeoutCts.Token));
             }
 
             await Task.WhenAll(tasks);
-
-            await _gate.WaitAsync(cancellationToken);
-            try
-            {
-                foreach (var id in userIdsToFetch)
-                {
-                    _usersIds.Remove(id);
-                }
-            }
-            finally
-            {
-                _gate.Release();
-            }
         }
 
         private async Task LoadUserChunkAsync(List<string> userIds, ISession session, CancellationToken cancellationToken = default)
@@ -131,8 +113,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             try
             {
                 var users = await _clientService.Client.GetUsersAsync(session, userIds.ToArray(), canceller: cancellationToken);
-
-                var foundIds = new HashSet<string>(users.Users.Select(u => u.Id), StringComparer.Ordinal);
 
                 await _gate.WaitAsync(cancellationToken);
                 try
@@ -146,37 +126,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     _gate.Release();
                 }
-                
-                foreach (var user in users.Users)
-                {
-                    if (_waiters.TryRemove(user.Id, out var w))
-                    {
-                        w.TrySetResult(user);
-                    }
-                }
-                
-                foreach (var id in userIds)
-                {
-                    if (!foundIds.Contains(id))
-                    {
-                        if (_waiters.TryRemove(id, out var w))
-                        {
-                            w.TrySetResult(null);
-                        }
-                    }
-                }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[UserCacheService] Error fetching users: {ex.Message}");
-               
-                foreach (var id in userIds)
-                {
-                    if (_waiters.TryRemove(id, out var w))
-                    {
-                        w.TrySetResult(null);
-                    }
-                }
+                Debug.LogError($"[UserCacheService] Error fetching users: {ex}");
             }
             finally
             {
@@ -194,28 +147,19 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public void Dispose()
         {
-            _cancellationTokenSource.Cancel();
-
-            _gate.Wait();
-            try
+            if (_gate.Wait(TimeSpan.FromSeconds(1)))
             {
-                foreach (var kv in _waiters)
+                try
                 {
-                    if (_waiters.TryRemove(kv.Key, out var w))
-                    {
-                        w.TrySetResult(null);
-                    }
+                    _usersIds?.Clear();
+                    _userCache?.Clear();
                 }
-
-                _usersIds?.Clear();
-                _userCache?.Clear();
-            }
-            finally
-            {
-                _gate.Release();
+                finally
+                {
+                    _gate.Release();
+                }
             }
 
-            _cancellationTokenSource.Dispose();
             _semaphore?.Dispose();
             _gate.Dispose();
         }
