@@ -93,7 +93,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             if (Interlocked.Exchange(ref _isLoading, 1) == 0)
             {
-                _ = LoadUsersAsync(token).ContinueWith(_ => _isLoading = 0, token);
+                _ = LoadUsersAsync(token).ContinueWith(_ => _isLoading = 0, TaskScheduler.Default);
             }
         }
 
@@ -137,7 +137,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     foreach (var id in userIdsToFetch)
                     {
-                        _usersIds.Remove(id);
+                        if (_userCache.ContainsKey(id))
+                            _usersIds.Remove(id);
                     }
                 }
                 finally
@@ -212,7 +213,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                                 _gate.Release();
                             }
                             
-                            _ = LoadUsersAsync(cancellationToken);
+                            TryStartLoader(cancellationToken);
                         }
                     }
                 }
@@ -243,7 +244,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                                 _gate.Release();
                             }
 
-                            _ = LoadUsersAsync(cancellationToken);
+                            TryStartLoader(cancellationToken);
                         }
                         catch (Exception e)
                         {
