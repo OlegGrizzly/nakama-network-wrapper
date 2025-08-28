@@ -101,7 +101,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             
             foreach (var chunk in ChunkBy(userIdsToFetch, MaxUsersPerRequest))
             {
-                await _semaphore.WaitAsync();
+                await _semaphore.WaitAsync(timeoutCts.Token);
                 tasks.Add(LoadUserChunkAsync(chunk, session, timeoutCts.Token));
             }
 
