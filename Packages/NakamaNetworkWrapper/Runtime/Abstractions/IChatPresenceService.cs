@@ -22,6 +22,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         
         IReadOnlyDictionary<string, IUserPresence> GetPresences(string channelId);
 
+        bool IsUserOnline(string channelId, string userId);
+
+        int GetUserSessionCount(string channelId, string userId);
+
         Task ClearAllAsync();
     }
 }

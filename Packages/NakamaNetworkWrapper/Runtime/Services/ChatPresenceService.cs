@@ -39,6 +39,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (channel == null) throw new ArgumentNullException(nameof(channel));
             
             var presencesSnapshot = new List<IUserPresence>(channel.Presences);
+            if (channel.Self != null)
+            {
+                presencesSnapshot.Add(channel.Self);
+            }
 
             await _gate.WaitAsync();
             try
@@ -184,6 +188,46 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
 
                 return EmptyPresences;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public bool IsUserOnline(string channelId, string userId)
+        {
+            _gate.Wait();
+            try
+            {
+                if (_channelPresences.TryGetValue(channelId, out var usersMap))
+                {
+                    if (usersMap.TryGetValue(userId, out var sessionsMap))
+                    {
+                        return sessionsMap.Count > 0;
+                    }
+                }
+                return false;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public int GetUserSessionCount(string channelId, string userId)
+        {
+            _gate.Wait();
+            try
+            {
+                if (_channelPresences.TryGetValue(channelId, out var usersMap))
+                {
+                    if (usersMap.TryGetValue(userId, out var sessionsMap))
+                    {
+                        return sessionsMap.Count;
+                    }
+                }
+                return 0;
             }
             finally
             {
