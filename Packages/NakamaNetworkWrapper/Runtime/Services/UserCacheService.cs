@@ -18,6 +18,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly SemaphoreSlim _semaphore = new(MaxConcurrentRequests);
         private readonly SemaphoreSlim _gate = new(1, 1);
 
+        private Task _inflightLoadTask;
+        private readonly object _loadStartLock = new();
+
         private const int MaxUsersPerRequest = 100;
         private const int MaxConcurrentRequests = 5;
         
@@ -29,6 +32,18 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (_clientService.Client == null)
             {
                 throw new ArgumentException("ClientService.Client is null", nameof(clientService));
+            }
+        }
+        
+        private Task EnsureLoadRunningAsync()
+        {
+            lock (_loadStartLock)
+            {
+                if (_inflightLoadTask == null || _inflightLoadTask.IsCompleted)
+                {
+                    _inflightLoadTask = LoadUsersInternalAsync();
+                }
+                return _inflightLoadTask;
             }
         }
         
@@ -50,7 +65,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _gate.Release();
             }
 
-            await LoadUsersAsync();
+            await EnsureLoadRunningAsync();
 
             _userCache.TryGetValue(userId, out var result);
             return result;
@@ -76,10 +91,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _gate.Release();
             }
 
-            await LoadUsersAsync();
+            await EnsureLoadRunningAsync();
         }
 
-        private async Task LoadUsersAsync()
+        private async Task LoadUsersInternalAsync()
         {
             var session = _authService.Session ?? throw new InvalidOperationException("Not authenticated");
 
@@ -106,6 +121,22 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
 
             await Task.WhenAll(tasks);
+            
+            await _gate.WaitAsync(timeoutCts.Token);
+            try
+            {
+                foreach (var id in userIdsToFetch)
+                {
+                    if (_userCache.ContainsKey(id))
+                    {
+                        _usersIds.Remove(id);
+                    }
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
 
         private async Task LoadUserChunkAsync(List<string> userIds, ISession session, CancellationToken cancellationToken = default)
@@ -153,6 +184,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 {
                     _usersIds?.Clear();
                     _userCache?.Clear();
+                    _inflightLoadTask = null;
                 }
                 finally
                 {
