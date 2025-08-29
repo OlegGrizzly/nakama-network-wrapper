@@ -18,7 +18,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public static void Info(string m, string tag = "UserCache")
         {
-            if (Level >= LogLevel.Info) UnityEngine.Debug.LogWarning($"[{tag}] {m}");
+            if (Level >= LogLevel.Info) UnityEngine.Debug.Log($"[{tag}] {m}");
         }
         public static void Error(string m, string tag = "UserCache")
         {
