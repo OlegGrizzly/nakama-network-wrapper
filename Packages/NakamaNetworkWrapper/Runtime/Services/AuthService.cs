@@ -28,9 +28,9 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public IApiAccount Account { get; private set; }
         
         public event Action<ISession> OnAuthenticated;
+        public event Action<IApiAccount> OnAccountChanged;
         public event Action<Exception> OnAuthenticationFailed;
         public event Action OnLoggedOut;
-        public event Action<IApiAccount> OnAccountChanged;
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {

@@ -11,6 +11,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
     {
         event Action<ISession> OnAuthenticated;
         
+        event Action<IApiAccount> OnAccountChanged;
+        
         event Action<Exception> OnAuthenticationFailed;
         
         event Action OnLoggedOut;
