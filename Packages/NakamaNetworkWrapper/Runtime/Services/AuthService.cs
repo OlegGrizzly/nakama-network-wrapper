@@ -30,6 +30,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public event Action<ISession> OnAuthenticated;
         public event Action<Exception> OnAuthenticationFailed;
         public event Action OnLoggedOut;
+        public event Action<IApiAccount> OnAccountChanged;
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {
@@ -183,6 +184,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             finally
             {
                 _gate.Release();
+                
+                OnAccountChanged?.Invoke(Account);
             }
         }
         
