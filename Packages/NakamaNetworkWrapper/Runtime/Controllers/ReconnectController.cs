@@ -18,6 +18,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
 
         private CancellationTokenSource _loopCts;
         private bool _disposed;
+        private bool _autoReconnectEnabled = true;
 
         public ReconnectController(IAuthService authService, IClientService clientService)
         {
@@ -31,6 +32,25 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
         }
 
         public bool IsReconnecting => _loopCts != null;
+
+        /// <summary>
+        /// Runtime switch for the automatic reconnect loop (e.g. the player explicitly
+        /// chose an offline mode). Setting it to false also stops a loop already running;
+        /// setting it back to true does not start one — call EnsureConnection for that.
+        /// </summary>
+        public bool AutoReconnectEnabled
+        {
+            get => _autoReconnectEnabled;
+            set
+            {
+                _autoReconnectEnabled = value;
+
+                if (!value)
+                {
+                    StopLoop();
+                }
+            }
+        }
 
         public event Action<int> OnReconnectAttempt;
         public event Action OnReconnectFailed;
@@ -62,6 +82,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Controllers
         private void StartLoop(bool immediate)
         {
             if (_disposed) return;
+            if (!_autoReconnectEnabled) return;
             if (_loopCts != null) return;
 
             var config = _clientService.Config;
