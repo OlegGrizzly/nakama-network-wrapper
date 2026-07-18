@@ -52,6 +52,7 @@ namespace Samples.Chat
 		private IUserCacheService _userCacheService;
 		private IChatService _chatService;
 		private ConnectionStateMachine _stateMachine;
+		private ReconnectController _reconnectController;
 
 		private string _currentChannelId;
 		private string _prevCursor;
@@ -113,6 +114,9 @@ namespace Samples.Chat
 
 			_stateMachine = new ConnectionStateMachine(_authService, _clientService);
 			_stateMachine.OnStateChanged += UpdateUiByState;
+
+			_reconnectController = new ReconnectController(_authService, _clientService);
+			_reconnectController.OnReconnectAttempt += OnReconnectAttempt;
 
 			UpdateUiByState(_stateMachine.CurrentState);
 
@@ -340,6 +344,27 @@ namespace Samples.Chat
 			disconnectButton.interactable = state == ConnectionState.Connected;
 		}
 
+		private void OnReconnectAttempt(int attempt)
+		{
+			Log($"Reconnecting... attempt {attempt}", Color.yellow);
+		}
+
+		private void OnApplicationFocus(bool hasFocus)
+		{
+			if (hasFocus)
+			{
+				_reconnectController?.EnsureConnection();
+			}
+		}
+
+		private void OnApplicationPause(bool paused)
+		{
+			if (!paused)
+			{
+				_reconnectController?.EnsureConnection();
+			}
+		}
+
 		private void Log(string text, Color color)
 		{
 			var html = $"<color=#{ColorUtility.ToHtmlStringRGB(color)}>{text}</color>";
@@ -356,6 +381,12 @@ namespace Samples.Chat
 
 		private void OnDestroy()
 		{
+			if (_reconnectController != null)
+			{
+				_reconnectController.OnReconnectAttempt -= OnReconnectAttempt;
+				_reconnectController.Dispose();
+			}
+
 			if (_chatService != null)
 			{
 				_chatService.OnMessageReceived -= OnMessageReceived;

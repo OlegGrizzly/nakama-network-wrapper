@@ -40,7 +40,20 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
 
         [SerializeField]
         private int baseDelayMs = 1000;
-        
+
+        [Header("Reconnect Settings")]
+        [SerializeField]
+        private bool autoReconnect = true;
+
+        [SerializeField]
+        private int reconnectMaxAttempts; // 0 = infinite
+
+        [SerializeField]
+        private int reconnectBaseDelayMs = 1000;
+
+        [SerializeField]
+        private int reconnectMaxDelayMs = 30000;
+
         public string Host => host;
         
         public int Port => port;
@@ -56,8 +69,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
         public int ConnectTimeout => connectTimeout;
 
         public int MaxRetries => maxRetries;
-        
+
         public int BaseDelayMs => baseDelayMs;
+
+        public bool AutoReconnect => autoReconnect;
+
+        public int ReconnectMaxAttempts => reconnectMaxAttempts;
+
+        public int ReconnectBaseDelayMs => reconnectBaseDelayMs;
+
+        public int ReconnectMaxDelayMs => reconnectMaxDelayMs;
 
         public CancellationTokenSource GetCancellationTokenSource()
         {
@@ -85,6 +106,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Config
 
             maxRetries = Mathf.Max(0, maxRetries);
             baseDelayMs = Mathf.Max(0, baseDelayMs);
+
+            reconnectMaxAttempts = Mathf.Max(0, reconnectMaxAttempts);
+            reconnectBaseDelayMs = Mathf.Max(100, reconnectBaseDelayMs);
+            reconnectMaxDelayMs = Mathf.Max(reconnectBaseDelayMs, reconnectMaxDelayMs);
         }
         #endif
     }

@@ -31,6 +31,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public event Action<IApiAccount> OnAccountChanged;
         public event Action<Exception> OnAuthenticationFailed;
         public event Action OnLoggedOut;
+        public event Action OnSessionExpired;
         
         public async Task<ISession> LoginAsync(AuthType type, string id, string username = null, Dictionary<string, string> vars = null)
         {
@@ -78,6 +79,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             catch (Exception ex)
             {
                 Session = null;
+                Account = null;
                 AuthenticationFailed(ex);
                 throw;
             }
@@ -89,20 +91,64 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public async Task LogoutAsync()
         {
-            if (Session == null)
-            {
-                return;
-            }
-
             await _gate.WaitAsync();
             try
             {
+                if (Session == null)
+                {
+                    return;
+                }
+
                 await _clientService.DisconnectAsync();
 
                 Session = null;
+                Account = null;
                 _tokenPersistence?.Clear();
 
                 LoggedOut();
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public async Task<bool> TryReconnectAsync(CancellationToken ct = default)
+        {
+            await _gate.WaitAsync(ct);
+            try
+            {
+                if (Session == null) return false;
+                if (_clientService.IsConnected) return true;
+
+                try
+                {
+                    await RefreshSessionIfNeededAsync();
+                }
+                catch (ApiResponseException ex) when (ex.StatusCode == 401 || ex.StatusCode == 403)
+                {
+                    // Refresh token is no longer accepted — the session is unrecoverable.
+                    ExpireSessionLocked();
+                    return false;
+                }
+
+                if (Session.IsExpired)
+                {
+                    // Still expired after the refresh attempt — there is no usable refresh
+                    // token, so connecting would just fail forever. Escalate instead of
+                    // letting the reconnect loop spin with a dead token.
+                    ExpireSessionLocked();
+                    return false;
+                }
+
+                await _clientService.ConnectAsync(Session);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Reconnect attempt failed: {ex.Message}");
+                return false;
             }
             finally
             {
@@ -184,9 +230,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             finally
             {
                 _gate.Release();
-                
-                OnAccountChanged?.Invoke(Account);
             }
+
+            // Only reached on success — a failed update must not re-announce the stale account.
+            OnAccountChanged?.Invoke(Account);
         }
         
         private void Authenticated(ISession session) => OnAuthenticated?.Invoke(session);
@@ -199,15 +246,29 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         private void LoggedOut() => OnLoggedOut?.Invoke();
 
+        private void SessionExpired() => OnSessionExpired?.Invoke();
+
+        /// <summary>Drops the unrecoverable session and announces it. Must be called while holding the gate.</summary>
+        private void ExpireSessionLocked()
+        {
+            _tokenPersistence?.Clear();
+            Session = null;
+            Account = null;
+
+            SessionExpired();
+        }
+
         private async Task RefreshSessionIfNeededAsync()
         {
             if (Session == null) return;
-            if (!Session.IsExpired) return;
             if (string.IsNullOrEmpty(Session.RefreshToken)) return;
+            // Refresh slightly ahead of expiry so the socket never connects with a token
+            // that dies mid-handshake.
+            if (!Session.HasExpired(DateTime.UtcNow.AddMinutes(1))) return;
 
             var refreshed = await _clientService.Client.SessionRefreshAsync(Session, canceller: _clientService.ShutdownToken);
             Session = refreshed;
-            
+
             SaveTokensIfPossible(refreshed);
         }
 

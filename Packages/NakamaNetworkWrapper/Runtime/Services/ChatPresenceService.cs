@@ -21,6 +21,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private static readonly IReadOnlyDictionary<string, IUserPresence> EmptyPresences = new ReadOnlyDictionary<string, IUserPresence>(new Dictionary<string, IUserPresence>());
         private readonly Dictionary<string, TaskCompletionSource<bool>> _channelReady = new();
         private readonly SemaphoreSlim _gate = new(1, 1);
+        private bool _disposed;
 
         public ChatPresenceService(ICoroutineRunner coroutineRunner, IUserCacheService userCacheService = null)
         {
@@ -319,26 +320,27 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             try
             {
                 await RunDelayCoroutine(token);
+                // OperationCanceledException (base of TaskCanceledException) covers both the
+                // coroutine cancel and a cancellation while waiting for the gate.
+                await _gate.WaitAsync(token);
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException)
             {
                 return;
             }
 
-            await _gate.WaitAsync(token);
             try
             {
                 if (_channelPresences.TryGetValue(channelId, out var usersMap) &&
-                    usersMap.TryGetValue(userId, out var sessionsMap))
+                    usersMap.TryGetValue(userId, out var sessionsMap) &&
+                    sessionsMap.Remove(sessionId, out var removedCandidate))
                 {
-                    if (sessionsMap.TryGetValue(sessionId, out var removedPresenceCandidate))
-                    {
-                        removedPresence = removedPresenceCandidate;
-                    }
-                    sessionsMap.Remove(sessionId);
                     if (sessionsMap.Count == 0)
                     {
                         usersMap.Remove(userId);
+                        // Report the leave only when the user has no sessions left —
+                        // symmetric with the user-level join events.
+                        removedPresence = removedCandidate;
                     }
                 }
             }
@@ -391,6 +393,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         
         public void Dispose()
         {
+            if (_disposed) return;
+
+            _disposed = true;
+
             _gate.Wait();
             try
             {

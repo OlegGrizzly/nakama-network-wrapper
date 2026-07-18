@@ -13,7 +13,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Abstractions
         event Action OnConnected;
         
         event Action OnDisconnected;
-        
+
+        /// <summary>Fired only for unexpected connection drops (not manual disconnects).</summary>
+        event Action OnConnectionLost;
+
         event Action OnRetrying;
         
         event Action<Exception> OnReceivedError;

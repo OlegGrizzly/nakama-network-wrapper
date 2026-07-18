@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Nakama;
@@ -18,17 +19,19 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         private readonly Dictionary<string, IChannel> _channels = new();
         private readonly Dictionary<(ChannelType type, string key), SubscribedChannel> _desiredChannels = new();
         private readonly Dictionary<string, (ChannelType type, string key)> _channelIdToDesiredKey = new();
+        private string _desiredChannelsUserId;
 
         public ChatService(IClientService clientService, IAuthService authService, IUserCacheService userCacheService = null, IChatPresenceService chatPresenceService = null)
         {
             _clientService = clientService ?? throw new ArgumentNullException(nameof(clientService));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            
+
             _userCacheService = userCacheService;
             _chatPresenceService = chatPresenceService;
 
             _clientService.OnConnected += Connected;
             _clientService.OnDisconnected += Disconnected;
+            _authService.OnLoggedOut += LoggedOut;
         }
 
         public event Action<IChannel> OnJoinedChannel;
@@ -42,13 +45,14 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public async Task<IChannel> JoinChannelAsync(ChannelType channelType, string channelId, bool persistence = true, bool hidden = false)
         {
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
-            
-            var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
+
+            var socket = GetConnectedSocket();
             var channel = await socket.JoinChatAsync(channelId, channelType, persistence, hidden);
-            
+
             RegisterChannel(channel.Id, channel);
             _desiredChannels[(channelType, channelId)] = new SubscribedChannel(channelType, channelId, persistence, hidden);
             _channelIdToDesiredKey[channel.Id] = (channelType, channelId);
+            _desiredChannelsUserId = _authService.Session?.UserId;
             
             if (_chatPresenceService != null)
             {
@@ -64,30 +68,45 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             var channel = GetChannel(channelId);
             if (channel == null) return;
 
-            var socket = _clientService.Socket;
+            Exception leaveError = null;
             try
             {
-                if (socket != null)
+                var socket = _clientService.Socket;
+                if (socket is { IsConnected: true })
                 {
                     await socket.LeaveChatAsync(channel);
-                }
-                
-                UnregisterChannel(channelId);
-                if (_chatPresenceService != null)
-                {
-                    await _chatPresenceService.RemoveChannelPresencesAsync(channel);
-                }
-
-                if (_channelIdToDesiredKey.TryGetValue(channelId, out var desiredKey))
-                {
-                    _desiredChannels.Remove(desiredKey);
-                    _channelIdToDesiredKey.Remove(channelId);
                 }
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[ChatService] Error while leaving channel '{channelId}': {ex}");
-                throw;
+                leaveError = ex;
+            }
+
+            // Local state is cleaned regardless of the network call, otherwise the
+            // channel silently rejoins itself after the next reconnect.
+            UnregisterChannel(channelId);
+
+            if (_channelIdToDesiredKey.Remove(channelId, out var desiredKey))
+            {
+                _desiredChannels.Remove(desiredKey);
+            }
+
+            if (_chatPresenceService != null)
+            {
+                try
+                {
+                    await _chatPresenceService.RemoveChannelPresencesAsync(channel);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[ChatService] Presence cleanup failed for '{channelId}': {ex.Message}");
+                }
+            }
+
+            if (leaveError != null)
+            {
+                ExceptionDispatchInfo.Capture(leaveError).Throw();
             }
         }
 
@@ -96,7 +115,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(channelId)) throw new ArgumentException("Channel id required", nameof(channelId));
             
             var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
-            var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
+            var socket = GetConnectedSocket();
             await socket.WriteChatMessageAsync(channel.Id, content);
         }
         
@@ -106,7 +125,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(messageId)) throw new ArgumentException("Message id required", nameof(messageId));
             
             var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
-            var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
+            var socket = GetConnectedSocket();
             await socket.UpdateChatMessageAsync(channel.Id, messageId, content);
         }
 
@@ -116,7 +135,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             if (string.IsNullOrWhiteSpace(messageId)) throw new ArgumentException("Message id required", nameof(messageId));
             
             var channel = GetChannel(channelId) ?? throw new InvalidOperationException($"Channel '{channelId}' not joined");
-            var socket = _clientService.Socket ?? throw new InvalidOperationException("Not connected");
+            var socket = GetConnectedSocket();
             await socket.RemoveChatMessageAsync(channel.Id, messageId);
         }
 
@@ -153,16 +172,34 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
         }
 
+        private ISocket GetConnectedSocket()
+        {
+            // The socket instance is reused across reconnects, so a non-null socket
+            // no longer implies a live connection — check IsConnected explicitly.
+            var socket = _clientService.Socket;
+            if (socket is not { IsConnected: true }) throw new InvalidOperationException("Not connected");
+
+            return socket;
+        }
+
         private void Connected()
         {
             AttachSocket();
+
+            // Channels subscribed under another account must never leak into this one.
+            var currentUserId = _authService.Session?.UserId;
+            if (_desiredChannels.Count > 0 && _desiredChannelsUserId != currentUserId)
+            {
+                _desiredChannels.Clear();
+            }
+
             _ = RejoinDesiredChannelsAsync();
         }
 
         private void Disconnected()
         {
             DetachSocket();
-            
+
             _channels.Clear();
             _channelIdToDesiredKey.Clear();
 
@@ -170,6 +207,14 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             {
                 _ = _chatPresenceService.ClearAllAsync();
             }
+        }
+
+        private void LoggedOut()
+        {
+            // Explicit logout abandons the subscriptions entirely — they must not be
+            // re-joined for whoever logs in next.
+            _desiredChannels.Clear();
+            _desiredChannelsUserId = null;
         }
 
         private void AttachSocket()
@@ -194,18 +239,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void ReceivedChannelMessage(IApiChannelMessage msg)
         {
-            var isJoined = false;
-            foreach (var ch in _channels.Values)
-            {
-                if (ch.Id == msg.ChannelId)
-                {
-                    isJoined = true;
-                    break;
-                }
-            }
-            
-            if (!isJoined) return;
-            
+            if (!_channels.ContainsKey(msg.ChannelId)) return;
+
             OnMessageReceived?.Invoke(msg);
         }
         
@@ -219,27 +254,45 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private async Task RejoinDesiredChannelsAsync()
         {
-            var socket = _clientService.Socket;
-            if (socket == null || !socket.IsConnected) return;
-
-            foreach (var entry in _desiredChannels.Values)
+            try
             {
-                try
+                var socket = _clientService.Socket;
+                if (socket == null || !socket.IsConnected) return;
+
+                // Snapshot: joins/leaves during the awaits below would otherwise
+                // invalidate the iterator and silently abort the whole rejoin.
+                var desired = new List<SubscribedChannel>(_desiredChannels.Values);
+
+                foreach (var entry in desired)
                 {
-                    var channel = await socket.JoinChatAsync(entry.Key, entry.Type, entry.Persistence, entry.Hidden);
+                    // The connection may have dropped again mid-rejoin.
+                    if (!socket.IsConnected) break;
 
-                    RegisterChannel(channel.Id, channel);
-                    _channelIdToDesiredKey[channel.Id] = (entry.Type, entry.Key);
+                    // The user may have left the channel while we were rejoining others.
+                    if (!_desiredChannels.ContainsKey((entry.Type, entry.Key))) continue;
 
-                    if (_chatPresenceService != null)
+                    try
                     {
-                        await _chatPresenceService.AddChannelPresencesAsync(channel);
+                        var channel = await socket.JoinChatAsync(entry.Key, entry.Type, entry.Persistence, entry.Hidden);
+
+                        RegisterChannel(channel.Id, channel);
+                        _channelIdToDesiredKey[channel.Id] = (entry.Type, entry.Key);
+
+                        if (_chatPresenceService != null)
+                        {
+                            await _chatPresenceService.AddChannelPresencesAsync(channel);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[ChatService] Rejoin failed for {entry.Type}:{entry.Key} - {ex.Message}");
                     }
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[ChatService] Rejoin failed for {entry.Type}:{entry.Key} - {ex.Message}");
-                }
+            }
+            catch (Exception ex)
+            {
+                // Fired-and-forgotten from Connected — never let it die silently.
+                Debug.LogError($"[ChatService] Rejoin loop failed: {ex}");
             }
         }
         
@@ -267,7 +320,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         {
             _clientService.OnConnected -= Connected;
             _clientService.OnDisconnected -= Disconnected;
-            
+            _authService.OnLoggedOut -= LoggedOut;
+
             Disconnected();
         }
     }

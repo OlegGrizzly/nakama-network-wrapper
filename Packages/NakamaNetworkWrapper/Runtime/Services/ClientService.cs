@@ -11,12 +11,16 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
     public sealed class ClientService : IClientService
     {
         private readonly IClient _client;
-        private ISocket _socket;
         private readonly ConnectionConfig _config;
-        private bool _disposed;
-        private CancellationTokenSource _shutdownCts;
         private readonly SemaphoreSlim _connectionGate = new(1, 1);
-        
+
+        private ISocket _socket;
+        private UnitySocket _socketAdapter;
+        private bool _disposed;
+        private bool _manualDisconnect;
+        private bool _notifiedConnected;
+        private CancellationTokenSource _shutdownCts;
+
         public ClientService(ConnectionConfig config)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -24,22 +28,23 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             _client = new Client(config.Scheme, config.Host, config.Port, config.ServerKey, UnityWebRequestAdapter.Instance, config.AutoRefreshSession);
             _client.GlobalRetryConfiguration = _config.GetRetryConfiguration(Retrying);
             _client.Timeout = config.ConnectTimeout;
-            
+
             _shutdownCts = new CancellationTokenSource();
         }
-        
+
         public IClient Client => _client;
         public ISocket Socket => _socket;
         public ConnectionConfig Config => _config;
         public bool IsConnected => _socket?.IsConnected == true;
         public CancellationToken ShutdownToken => _shutdownCts.Token;
-        
+
         public event Action OnConnecting;
         public event Action OnConnected;
         public event Action OnDisconnected;
+        public event Action OnConnectionLost;
         public event Action OnRetrying;
         public event Action<Exception> OnReceivedError;
-        
+
         public async Task ConnectAsync(ISession session)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(ClientService));
@@ -49,14 +54,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             try
             {
                 if (_socket is { IsConnected: true }) return;
-                
-                if (_socket != null)
-                {
-                    await CloseAndClearSocketAsync();
-                }
 
-                _socket = _client.NewSocket(true);
-                AttachSocketEvents(_socket);
+                EnsureSocket();
+
+                _manualDisconnect = false;
 
                 Connecting();
 
@@ -66,10 +67,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
                 catch (Exception ex)
                 {
-                    DetachSocketEvents(_socket);
-                    _socket = null;
-
                     ReceivedError(ex);
+
+                    // Let state listeners leave the "Connecting" state.
+                    OnDisconnected?.Invoke();
                     throw;
                 }
             }
@@ -78,7 +79,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _connectionGate.Release();
             }
         }
-        
+
         public async Task DisconnectAsync()
         {
             if (_disposed) return;
@@ -86,14 +87,23 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             await _connectionGate.WaitAsync(ShutdownToken);
             try
             {
+                _manualDisconnect = true;
+
                 if (_socket != null)
                 {
-                    await CloseAndClearSocketAsync();
-
-                    #if UNITY_WEBGL && !UNITY_EDITOR
-                    Disconnected();
-                    #endif
+                    try
+                    {
+                        await _socket.CloseAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"Socket close failed: {ex.Message}");
+                    }
                 }
+
+                // Guarantees an immediate, exactly-once notification on every platform;
+                // the queued socket Closed event becomes a no-op afterwards.
+                HandleSocketClosed();
 
                 ResetShutdownCts();
             }
@@ -102,12 +112,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _connectionGate.Release();
             }
         }
-        
+
         public async Task<IApiRpc> RpcAsync(string rpcName, string payload = null)
         {
             if (string.IsNullOrWhiteSpace(rpcName)) throw new ArgumentException("RPC name required", nameof(rpcName));
             if (_socket is not { IsConnected: true }) throw new InvalidOperationException("Socket is not connected");
-            
+
             try
             {
                 return await _socket.RpcAsync(rpcName, payload ?? string.Empty);
@@ -118,37 +128,75 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 throw;
             }
         }
-        
+
+        private void EnsureSocket()
+        {
+            if (_socket != null) return;
+
+            // The socket is created once and reused for every reconnect: each
+            // ClientExtensions.NewSocket(useMainThread: true) call would leak a
+            // "[Nakama Socket]" DontDestroyOnLoad GameObject per connect.
+#if UNITY_WEBGL && !UNITY_EDITOR
+            ISocketAdapter transport = new JsWebSocketAdapter();
+#else
+            ISocketAdapter transport = new WebSocketStdlibAdapter();
+#endif
+            _socketAdapter = UnitySocket.Create(transport);
+            _socket = Nakama.Socket.From(_client, _socketAdapter);
+
+            AttachSocketEvents(_socket);
+        }
+
         private void AttachSocketEvents(ISocket socket)
         {
-            socket.Connected += Connected;
-            socket.Closed += Disconnected;
+            socket.Connected += HandleSocketConnected;
+            socket.Closed += HandleSocketClosed;
             socket.ReceivedError += ReceivedError;
         }
 
         private void DetachSocketEvents(ISocket socket)
         {
             if (socket == null) return;
-            
-            socket.Connected -= Connected;
-            socket.Closed -= Disconnected;
+
+            socket.Connected -= HandleSocketConnected;
+            socket.Closed -= HandleSocketClosed;
             socket.ReceivedError -= ReceivedError;
         }
 
         private void Connecting() => OnConnecting?.Invoke();
 
-        private void Connected() => OnConnected?.Invoke();
+        private void HandleSocketConnected()
+        {
+            _notifiedConnected = true;
+            OnConnected?.Invoke();
+        }
 
-        private void Disconnected() => OnDisconnected?.Invoke();
+        private void HandleSocketClosed()
+        {
+            if (!_notifiedConnected) return;
+
+            _notifiedConnected = false;
+            var manual = _manualDisconnect;
+
+            OnDisconnected?.Invoke();
+
+            if (!manual)
+            {
+                OnConnectionLost?.Invoke();
+            }
+        }
 
         private void Retrying()
         {
-            #if UNITY_WEBGL && !UNITY_EDITOR
-            ResetShutdownCts();
-            Disconnected();
-            #else
+            // HTTP retries firing while the socket transport is actually dead but its
+            // Closed event never arrived (e.g. WebGL tab suspend) — synthesize the close
+            // so listeners and the reconnect loop learn about the drop.
+            if (_notifiedConnected && _socket is { IsConnected: false })
+            {
+                HandleSocketClosed();
+            }
+
             OnRetrying?.Invoke();
-            #endif
         }
 
         private void ReceivedError(Exception error)
@@ -159,36 +207,19 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private void ResetShutdownCts()
         {
-            _shutdownCts.Cancel();
-            _shutdownCts.Dispose();
+            var previous = _shutdownCts;
             _shutdownCts = new CancellationTokenSource();
+
+            previous.Cancel();
+            previous.Dispose();
         }
 
-        private async Task CloseAndClearSocketAsync()
-        {
-            var socketToClose = _socket;
-            if (socketToClose == null) return;
-
-            try
-            {
-                DetachSocketEvents(socketToClose);
-                await socketToClose.CloseAsync();
-            }
-            finally
-            {
-                if (ReferenceEquals(_socket, socketToClose))
-                {
-                    _socket = null;
-                }
-            }
-        }
-        
         public void Dispose()
         {
             if (_disposed) return;
-            
+
             _disposed = true;
-            
+
             _shutdownCts.Cancel();
             _shutdownCts.Dispose();
 
@@ -206,6 +237,12 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 }
 
                 _socket = null;
+            }
+
+            if (_socketAdapter != null)
+            {
+                UnityEngine.Object.Destroy(_socketAdapter.gameObject);
+                _socketAdapter = null;
             }
 
             _connectionGate.Dispose();

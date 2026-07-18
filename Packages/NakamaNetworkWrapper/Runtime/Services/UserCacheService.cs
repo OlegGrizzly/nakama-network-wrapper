@@ -19,6 +19,7 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         private Task _inflightLoadTask;
         private readonly object _loadStartLock = new();
+        private bool _disposed;
 
         private const int MaxUsersPerRequest = 100;
         private const int MaxConcurrentRequests = 5;
@@ -67,10 +68,20 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _gate.Release();
             }
 
-            await EnsureLoadRunningAsync();
+            // The in-flight load may have snapshotted _usersIds before our id was queued.
+            // In that case the first await returns without it; the second pass starts a
+            // fresh load whose snapshot is guaranteed to include the id.
+            for (var i = 0; i < 2; i++)
+            {
+                await EnsureLoadRunningAsync();
 
-            _userCache.TryGetValue(userId, out var result);
-            return result;
+                if (_userCache.TryGetValue(userId, out var result))
+                {
+                    return result;
+                }
+            }
+
+            return null;
         }
 
         public async Task CollectUserIdsAsync(HashSet<string> ids)
@@ -94,6 +105,31 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             }
 
             await EnsureLoadRunningAsync();
+
+            // Same race as in GetUserAsync: if some of our ids missed the running load's
+            // snapshot, kick off one more pass so the prefetch actually completes.
+            var anyPending = false;
+            await _gate.WaitAsync();
+            try
+            {
+                foreach (var id in ids)
+                {
+                    if (!string.IsNullOrEmpty(id) && !_userCache.ContainsKey(id) && _usersIds.Contains(id))
+                    {
+                        anyPending = true;
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            if (anyPending)
+            {
+                await EnsureLoadRunningAsync();
+            }
         }
 
         private async Task LoadUsersInternalAsync()
@@ -180,6 +216,10 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
 
         public void Dispose()
         {
+            if (_disposed) return;
+
+            _disposed = true;
+
             if (_gate.Wait(TimeSpan.FromSeconds(1)))
             {
                 try
