@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Nakama;
 using OlegGrizzly.NakamaNetworkWrapper.Abstractions;
-using UnityEngine;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Linq;
@@ -50,10 +49,8 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
         public async Task<IApiUser> GetUserAsync(string userId)
         {
             if (string.IsNullOrEmpty(userId)) return null;
-            Debug.Log($"[Chat][UserCache] GET START userId={userId}");
             if (_userCache.TryGetValue(userId, out var cached))
             {
-                Debug.Log($"[Chat][UserCache] GET HIT userId={userId}");
                 return cached;
             }
 
@@ -63,7 +60,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 if (!_userCache.ContainsKey(userId))
                 {
                     _usersIds.Add(userId);
-                    Debug.Log($"[Chat][UserCache] GET MISS userId={userId} → queued, pending={_usersIds.Count}");
                 }
             }
             finally
@@ -74,14 +70,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             await EnsureLoadRunningAsync();
 
             _userCache.TryGetValue(userId, out var result);
-            if (result == null)
-            {
-                Debug.LogWarning($"[Chat][UserCache] GET AFTER-LOAD NULL userId={userId}; inQueue={_usersIds.Contains(userId)}; cacheCount={_userCache.Count}; pendingCount={_usersIds.Count}");
-            }
-            else
-            {
-                Debug.Log($"[Chat][UserCache] GET FOUND AFTER-LOAD userId={userId}");
-            }
             return result;
         }
 
@@ -123,8 +111,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                 _gate.Release();
             }
 
-            Debug.Log($"[Chat][UserCache] LOAD BUILD pendingUnique={userIdsToFetch.Count}, cache={_userCache.Count}");
-
             if (userIdsToFetch.Count == 0) return;
 
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -160,7 +146,6 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
             try
             {
                 var users = await _clientService.Client.GetUsersAsync(session, userIds.ToArray(), canceller: cancellationToken);
-                Debug.Log($"[Chat][UserCache] CHUNK FETCH OK requested={userIds.Count}, received={users.Users?.Count() ?? 0}");
 
                 await _gate.WaitAsync(cancellationToken);
                 try
@@ -169,22 +154,15 @@ namespace OlegGrizzly.NakamaNetworkWrapper.Services
                     {
                         _userCache[user.Id] = user;
                     }
-                    var receivedIds = new HashSet<string>(users.Users.Select(u => u.Id));
-                    var missing = userIds.Where(id => !receivedIds.Contains(id)).ToList();
-                    if (missing.Count > 0)
-                    {
-                        Debug.LogWarning($"[Chat][UserCache] CHUNK MISSING ids={missing.Count} example=[{string.Join(",", missing.Take(5))}] ");
-                    }
                 }
                 finally
                 {
                     _gate.Release();
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Debug.LogError($"[Chat][UserCache] CHUNK ERROR requested={userIds.Count} → {ex.GetType().Name}: {ex.Message}");
-                Debug.LogWarning($"[Chat][UserCache] CHUNK ERROR IDS example=[{string.Join(",", userIds.Take(5))}] ");
+                // Ignore chunk load failures; the affected users simply stay uncached.
             }
             finally
             {
